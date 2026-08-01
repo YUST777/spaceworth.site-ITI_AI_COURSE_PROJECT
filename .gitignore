@@ -1,0 +1,34 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Data (large - see README for download instructions)
+notebooks/data/
+*.csv
+!frontend/public/**/*.csv
+
+# Logs / OS
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Assignment brief (not part of deliverable)
+*.pdf
