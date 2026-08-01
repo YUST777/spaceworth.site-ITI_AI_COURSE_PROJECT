@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from huggingface_hub import HfApi
+from huggingface_hub import HfApi, get_token
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,7 +12,7 @@ MODEL_PATH = ROOT / "models" / "house_price.pkl"
 
 
 def main() -> None:
-    token = os.environ.get("HF_TOKEN")
+    token = os.environ.get("HF_TOKEN") or get_token()
     repo_id = os.environ.get("HF_SPACE_ID")
     if not token:
         raise RuntimeError("Set HF_TOKEN to a Hugging Face write token before publishing.")
