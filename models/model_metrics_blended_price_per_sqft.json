@@ -1,0 +1,16 @@
+{
+  "model": "LightGBMAndCatBoostPricePerSqftBlend",
+  "device": "LightGBM CPU + CatBoost GPU",
+  "rows_total": 59436,
+  "rows_train": 50520,
+  "rows_validation": 8916,
+  "rows_test": 8916,
+  "lightgbm_weight": 0.66,
+  "catboost_weight": 0.33999999999999997,
+  "catboost_best_iteration": 2493,
+  "r2": 0.8534296302613196,
+  "accuracy_percent_r2": 85.34296302613195,
+  "mae": 2062874.5617638053,
+  "rmse": 4360442.826863386,
+  "training_seconds": 128.7592655819608
+}
