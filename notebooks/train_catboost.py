@@ -20,19 +20,42 @@ DATA_PATH = ROOT / "notebooks" / "data" / "house_prices.csv"
 MODEL_DIR = ROOT / "models"
 
 
-def locality_hint(title: object) -> str:
+def normalise_location_text(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return "unknown"
+    text = re.sub(r"[^a-z0-9 ]+", " ", value.strip().lower())
+    return re.sub(r"\s+", " ", text).strip() or "unknown"
+
+
+def locality_hint(title: object, society: object = None) -> str:
     if not isinstance(title, str) or not title.strip():
         return "unknown"
-    text = re.sub(r"\s+", " ", title.strip().lower())
-    value = text.rsplit(" in ", 1)[-1]
-    value = re.sub(r"[^a-z0-9 ]+", " ", value)
-    return re.sub(r"\s+", "_", value).strip("_") or "unknown"
+    text = normalise_location_text(title)
+    value = text.split(" for sale ", 1)[-1]
+    society_text = normalise_location_text(society)
+    value = re.sub(r"^in\s+", "", value)
+    if society_text != "unknown" and value.startswith(society_text):
+        value = value[len(society_text) :].strip()
+    return value.replace(" ", "_") or "unknown"
+
+
+def locality_tail(locality: object, token_count: int) -> str:
+    if not isinstance(locality, str) or not locality.strip() or locality == "unknown":
+        return "unknown"
+    tokens = locality.split("_")
+    return "_".join(tokens[-token_count:])
 
 
 def prepare_frame(raw: pd.DataFrame) -> tuple[pd.DataFrame, list[str], list[str]]:
     frame = build_features(raw)
     frame["society"] = raw["Society"].apply(simple_category)
-    frame["locality_hint"] = raw["Title"].apply(locality_hint)
+    frame["locality_hint"] = [
+        locality_hint(title, society)
+        for title, society in zip(raw["Title"], raw["Society"])
+    ]
+    frame["locality_tail_1"] = frame["locality_hint"].apply(lambda value: locality_tail(value, 1))
+    frame["locality_tail_2"] = frame["locality_hint"].apply(lambda value: locality_tail(value, 2))
+    frame["locality_tail_3"] = frame["locality_hint"].apply(lambda value: locality_tail(value, 3))
 
     frame = frame.dropna(subset=["price", "area_sqft"])
     frame = frame[
@@ -61,7 +84,13 @@ def prepare_frame(raw: pd.DataFrame) -> tuple[pd.DataFrame, list[str], list[str]
         "is_ground_floor",
         "is_top_floor",
     ]
-    categorical_features = CATEGORICAL_FEATURES + ["society", "locality_hint"]
+    categorical_features = CATEGORICAL_FEATURES + [
+        "society",
+        "locality_hint",
+        "locality_tail_1",
+        "locality_tail_2",
+        "locality_tail_3",
+    ]
     model_features = numeric_features + categorical_features
 
     for column in categorical_features:
@@ -71,6 +100,9 @@ def prepare_frame(raw: pd.DataFrame) -> tuple[pd.DataFrame, list[str], list[str]
         "location",
         "society",
         "locality_hint",
+        "locality_tail_1",
+        "locality_tail_2",
+        "locality_tail_3",
         "area_sqft",
         "bedrooms",
         "bathroom",
