@@ -9,13 +9,13 @@ ENV HF_MODEL_REPO=${HF_MODEL_REPO}
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY deployment/house-price-space/requirements.txt .
 RUN pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
 
-COPY app.py download_model.py ./
+COPY deployment/house-price-space/app.py deployment/house-price-space/download_model.py ./
 RUN python download_model.py && rm download_model.py
 
-ENV PORT=7860
-EXPOSE 7860
+ENV PORT=10000
+EXPOSE 10000
 
 CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT}"]

@@ -3,7 +3,7 @@ services:
     name: iti-house-price-api
     runtime: docker
     plan: free
-    dockerfilePath: ./deployment/house-price-space/Dockerfile
+    dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /health
     envVars:

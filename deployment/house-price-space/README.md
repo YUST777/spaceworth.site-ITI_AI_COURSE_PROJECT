@@ -9,7 +9,7 @@ pinned: false
 
 # ITI House Price API
 
-FastAPI service for the final house-price ensemble. It serves `POST /predict` and `GET /health` on port `7860`.
+FastAPI service for the final house-price ensemble. It downloads the validated model from `duck233/iti-house-price-model` during the image build and serves `POST /predict` and `GET /health` on port `7860`.
 
 ## Example request
 
