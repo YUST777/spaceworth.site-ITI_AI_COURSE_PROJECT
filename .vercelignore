@@ -5,5 +5,5 @@ models/
 *.csv
 *.pkl
 *.cbm
-*.txt
+models/*.txt
 __pycache__/
