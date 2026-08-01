@@ -1,0 +1,7 @@
+*
+!deployment/
+!deployment/house-price-space/
+!deployment/house-price-space/Dockerfile
+!deployment/house-price-space/app.py
+!deployment/house-price-space/download_model.py
+!deployment/house-price-space/requirements.txt

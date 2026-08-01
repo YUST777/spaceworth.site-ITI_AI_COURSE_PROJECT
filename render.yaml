@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: iti-house-price-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./deployment/house-price-space/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: ALLOWED_ORIGINS
+        value: "*"
