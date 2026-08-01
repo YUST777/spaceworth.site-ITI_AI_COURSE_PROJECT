@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "python scripts/download_model_for_vercel.py",
+  "functions": {
+    "api/index.py": {
+      "includeFiles": "models/house_price.pkl",
+      "memory": 2048,
+      "maxDuration": 60
+    }
+  }
+}

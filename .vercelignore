@@ -1,0 +1,9 @@
+.git/
+.venv/
+notebooks/data/
+models/
+*.csv
+*.pkl
+*.cbm
+*.txt
+__pycache__/
