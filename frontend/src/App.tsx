@@ -2156,74 +2156,61 @@ function App() {
               </Card>
             </>
           ) : (
-            <>
-          <Card className="summary-card card">
-            <div className="summary-heading"><span className="eyebrow">Live summary</span><h2>Property snapshot</h2></div>
-            <dl>
-              <div><dt>Area</dt><dd>{areaSqft ? `${areaSqft.toLocaleString("en-IN")} sq ft` : "—"}</dd></div>
-              <div><dt>Configuration</dt><dd>{safeFormView.bedrooms} bed · {safeFormView.bathrooms} bath</dd></div>
-              <div><dt>Property</dt><dd>{readable(form.propertyType)}</dd></div>
-              <div><dt>Location</dt><dd>{safeFormView.location}</dd></div>
-              <div><dt>Floor</dt><dd>{safeFormView.floorNumber} / {safeFormView.totalFloors}</dd></div>
-            </dl>
-          </Card>
-
-          <Card className={`prediction-card card tour-main-ai ${prediction.status}`}>
-            <div className="prediction-heading">
-              <div>
-                <span className="eyebrow">Live model trace</span>
-                <h2>Request → AI response</h2>
-              </div>
-              <Box />
-            </div>
-            {prediction.status === "success" && (
-              <div className="hero-price-box">
-                <span className="hero-price-eyebrow">Estimated Valuation</span>
-                <div className="hero-price-amount">{formatCurrency(prediction.price)}</div>
-                {pricePerSqft && (
-                  <div className="hero-price-per-sqft">{formatCurrency(pricePerSqft)} / sq ft</div>
-                )}
-              </div>
-            )}
-
-            <ol className="prediction-steps">
-              <li className="complete">
-                <span>1</span>
-                <div><strong>Validate input</strong><small>Schema-valid JSON</small></div>
-                <BadgeCheck />
-              </li>
-              <li className={prediction.status === "loading" ? "active" : prediction.status === "success" ? "complete" : ""}>
-                <span>2</span>
-                <div><strong>Run model</strong><small>{prediction.status === "loading" ? "Sending…" : prediction.status === "success" ? "POST /predict · 200" : "Railway API ready"}</small></div>
-                {prediction.status === "loading" ? <RefreshCw className="spinning" /> : prediction.status === "success" ? <BadgeCheck /> : <CircleDot />}
-              </li>
-              <li className={prediction.status === "success" ? "complete" : ""}>
-                <span>3</span>
+            <Card className={`prediction-card card tour-main-ai ${prediction.status}`}>
+              <div className="prediction-heading">
                 <div>
-                  <strong>{prediction.status === "success" ? "Valuation complete" : "Receive AI response"}</strong>
-                  <small>{prediction.status === "success" ? "90.64% R² ensemble prediction generated" : "Server price response appears here"}</small>
+                  <span className="eyebrow">Live model trace</span>
+                  <h2>Request → AI response</h2>
                 </div>
-                {prediction.status === "success" ? <BadgeCheck /> : <CircleDot />}
-              </li>
-            </ol>
+                <Box />
+              </div>
+              {prediction.status === "success" && (
+                <div className="hero-price-box">
+                  <span className="hero-price-eyebrow">Estimated Valuation</span>
+                  <div className="hero-price-amount">{formatCurrency(prediction.price)}</div>
+                  {pricePerSqft && (
+                    <div className="hero-price-per-sqft">{formatCurrency(pricePerSqft)} / sq ft</div>
+                  )}
+                </div>
+              )}
 
-            <div className="prediction-json-grid">
-              <article>
-                <header><span>01</span><strong>Input JSON</strong></header>
-                <pre>{JSON.stringify(visiblePredictionRequest)}</pre>
-              </article>
-              <article className={visiblePredictionResponse ? "has-response" : ""}>
-                <header><span>02</span><strong>AI response JSON</strong></header>
-                {visiblePredictionResponse ? <pre>{JSON.stringify(visiblePredictionResponse)}</pre> : <p>Run the real model to receive a signed query trace and price.</p>}
-              </article>
-            </div>
-            {prediction.status === "error" && <p className="prediction-error">{prediction.message}</p>}
-            <div className="model-score"><span>Validated held-out model</span><strong>90.64% R²</strong></div>
-            <Button className="dark-button predict-button" onClick={predict} disabled={prediction.status === "loading"}>
-              <Sparkles /> {prediction.status === "loading" ? "Predicting price…" : "Predict price"}
-            </Button>
-          </Card>
-            </>
+              <ol className="prediction-steps">
+                <li className="complete">
+                  <span>1</span>
+                  <div><strong>Validate input</strong><small>Schema-valid JSON</small></div>
+                  <BadgeCheck />
+                </li>
+                <li className={prediction.status === "loading" ? "active" : prediction.status === "success" ? "complete" : ""}>
+                  <span>2</span>
+                  <div><strong>Run model</strong><small>{prediction.status === "loading" ? "Sending…" : prediction.status === "success" ? "POST /predict · 200" : "Railway API ready"}</small></div>
+                  {prediction.status === "loading" ? <RefreshCw className="spinning" /> : prediction.status === "success" ? <BadgeCheck /> : <CircleDot />}
+                </li>
+                <li className={prediction.status === "success" ? "complete" : ""}>
+                  <span>3</span>
+                  <div>
+                    <strong>{prediction.status === "success" ? "Valuation complete" : "Receive AI response"}</strong>
+                    <small>{prediction.status === "success" ? "90.64% R² ensemble prediction generated" : "Server price response appears here"}</small>
+                  </div>
+                  {prediction.status === "success" ? <BadgeCheck /> : <CircleDot />}
+                </li>
+              </ol>
+
+              <div className="prediction-json-grid">
+                <article>
+                  <header><span>01</span><strong>Input JSON</strong></header>
+                  <pre>{JSON.stringify(visiblePredictionRequest)}</pre>
+                </article>
+                <article className={visiblePredictionResponse ? "has-response" : ""}>
+                  <header><span>02</span><strong>AI response JSON</strong></header>
+                  {visiblePredictionResponse ? <pre>{JSON.stringify(visiblePredictionResponse)}</pre> : <p>Run the real model to receive a signed query trace and price.</p>}
+                </article>
+              </div>
+              {prediction.status === "error" && <p className="prediction-error">{prediction.message}</p>}
+              <div className="model-score"><span>Validated held-out model</span><strong>90.64% R²</strong></div>
+              <Button className="dark-button predict-button" onClick={predict} disabled={prediction.status === "loading"}>
+                <Sparkles /> {prediction.status === "loading" ? "Predicting price…" : "Predict price"}
+              </Button>
+            </Card>
           )}
         </aside>
       </div>
