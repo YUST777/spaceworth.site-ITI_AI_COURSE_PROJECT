@@ -1,4 +1,4 @@
-![SpaceWorth Banner](banner.webp)
+![SpaceWorth Banner](spaceworth-banner.webp)
 
 # SpaceWorth — Production Property Intelligence & Valuation Engine
 
