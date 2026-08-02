@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Circle, Group, Layer, Line, Rect, Stage, Text, Transformer } from "react-konva";
 import type Konva from "konva";
 import { driver, type Driver } from "driver.js";
-import { AnimatePresence, motion } from "framer-motion";
 import L, { type Map as LeafletMap, type Marker as LeafletMarker } from "leaflet";
 import "driver.js/dist/driver.css";
 import "leaflet/dist/leaflet.css";
@@ -1589,14 +1588,8 @@ function App() {
         <div className="topbar-balance" aria-hidden="true" />
       </Card>
 
-      <AnimatePresence mode="wait" initial={false}>
-      <motion.div
-        key={section}
+      <div
         className={`workspace tour-workspace ${section === "proof" || section === "developers" ? "full-page-mode" : ""} mobile-panel-${mobilePanel}`}
-        initial={{ opacity: 0, y: 8, scale: 0.996 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: -6, scale: 0.998 }}
-        transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
       >
         <nav className="rail card" aria-label="Primary navigation">
           <Tooltip>
@@ -2085,8 +2078,7 @@ function App() {
             </>
           )}
         </aside>
-      </motion.div>
-      </AnimatePresence>
+      </div>
 
       {section !== "proof" && section !== "developers" && section !== "settings" && mobilePanel !== "canvas" && <button className="mobile-sheet-backdrop" onClick={() => setMobilePanel("canvas")} aria-label="Close open drawer" />}
       <div className={`mobile-control-dock card ${section === "proof" || section === "developers" || section === "settings" ? "routes-only" : ""}`}>
