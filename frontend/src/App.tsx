@@ -1571,52 +1571,7 @@ function App() {
     }
 
     if (section === "settings") {
-      return (
-        <div className="settings-panel">
-          <div className="functional-heading">
-            <div>
-              <h2>Connection settings</h2>
-              <p>The workspace saves automatically in this browser.</p>
-            </div>
-          </div>
-          <div className="settings-stack">
-            <article>
-              <div className="api-state">
-                {apiHealth === "online" ? <Wifi /> : <WifiOff />}
-                <div>
-                  <strong>Prediction API</strong>
-                  <span>{API_URL || "Not configured in VITE_PREDICTION_API_URL"}</span>
-                </div>
-              </div>
-              <span className={`connection-badge ${apiHealth}`}>{apiHealth}</span>
-            </article>
-            <article>
-              <div>
-                <strong>Automatic browser save</strong>
-                <span>Property fields, rooms and the latest prediction persist on this device.</span>
-              </div>
-              <span className="connection-badge online">active</span>
-            </article>
-            <article>
-              <div className="api-state">
-                <Database />
-                <div>
-                  <strong>Supabase project sync</strong>
-                  <span>Project ID: {PROJECT_ID}</span>
-                </div>
-              </div>
-              <span className={`connection-badge ${databaseSync === "synced" ? "online" : ""}`}>{databaseSync}</span>
-            </article>
-            <article>
-              <div>
-                <strong>Welcome walkthrough</strong>
-                <span>Replay the three-step guide for the workspace and both AI flows.</span>
-              </div>
-              <Button variant="outline" className="tour-replay-button" onClick={startWelcomeTour}><RotateCcw /> Replay tour</Button>
-            </article>
-          </div>
-        </div>
-      );
+      return null;
     }
 
     return (
@@ -1735,7 +1690,7 @@ function App() {
       </Card>
 
       <div
-        className={`workspace tour-workspace ${section === "proof" || section === "developers" ? "full-page-mode" : ""} mobile-panel-${mobilePanel}`}
+        className={`workspace tour-workspace ${section === "proof" || section === "developers" || section === "settings" ? "full-page-mode" : ""} mobile-panel-${mobilePanel}`}
       >
         <nav className="rail card" aria-label="Primary navigation">
           <Tooltip>
@@ -1771,6 +1726,53 @@ function App() {
         </nav>
 
         {section === "developers" && <DeveloperPortal apiUrl={API_URL} sourceUrl={SOURCE_URL} />}
+
+        {section === "settings" && (
+          <Card className="settings-page card">
+            <div className="functional-heading">
+              <div>
+                <h2>Connection settings</h2>
+                <p>The workspace saves automatically in this browser.</p>
+              </div>
+            </div>
+            <div className="settings-stack">
+              <article>
+                <div className="api-state">
+                  {apiHealth === "online" ? <Wifi /> : <WifiOff />}
+                  <div>
+                    <strong>Prediction API</strong>
+                    <span>{API_URL || "Not configured in VITE_PREDICTION_API_URL"}</span>
+                  </div>
+                </div>
+                <span className={`connection-badge ${apiHealth}`}>{apiHealth}</span>
+              </article>
+              <article>
+                <div>
+                  <strong>Automatic browser save</strong>
+                  <span>Property fields, rooms and the latest prediction persist on this device.</span>
+                </div>
+                <span className="connection-badge online">active</span>
+              </article>
+              <article>
+                <div className="api-state">
+                  <Database />
+                  <div>
+                    <strong>Supabase project sync</strong>
+                    <span>Project ID: {PROJECT_ID}</span>
+                  </div>
+                </div>
+                <span className={`connection-badge ${databaseSync === "synced" ? "online" : ""}`}>{databaseSync}</span>
+              </article>
+              <article>
+                <div>
+                  <strong>Welcome walkthrough</strong>
+                  <span>Replay the three-step guide for the workspace and both AI flows.</span>
+                </div>
+                <Button variant="outline" className="tour-replay-button" onClick={startWelcomeTour}><RotateCcw /> Replay tour</Button>
+              </article>
+            </div>
+          </Card>
+        )}
 
         {section === "proof" && (
           <Card className="proof-page card">
