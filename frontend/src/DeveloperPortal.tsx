@@ -303,12 +303,12 @@ export function DeveloperPortal({ apiUrl, sourceUrl }: DeveloperPortalProps) {
               <table className="developer-keys-table">
                 <thead>
                   <tr>
-                    <th>NAME</th>
-                    <th>KEY</th>
-                    <th>CREATED</th>
-                    <th>EXPIRES</th>
-                    <th>ENABLED</th>
-                    <th className="align-right"></th>
+                    <th style={{ width: "22%" }}>NAME</th>
+                    <th style={{ width: "28%" }}>KEY</th>
+                    <th style={{ width: "18%" }}>CREATED</th>
+                    <th style={{ width: "16%" }}>EXPIRES</th>
+                    <th style={{ width: "10%" }}>ENABLED</th>
+                    <th style={{ width: "6%" }} className="align-right"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -321,8 +321,10 @@ export function DeveloperPortal({ apiUrl, sourceUrl }: DeveloperPortalProps) {
                   {apiKeys.map((item) => (
                     <tr key={item.id} className={!item.enabled ? "disabled-row" : ""}>
                       <td className="key-name-cell">
-                        <span>{item.name}</span>
-                        <span className="info-icon-wrapper" title={`ID: ${item.id}`}><Info /></span>
+                        <div className="key-name-inner">
+                          <span>{item.name}</span>
+                          <span className="info-icon-wrapper" title={`ID: ${item.id}`}><Info /></span>
+                        </div>
                       </td>
                       <td className="key-code-cell">
                         <code>••••••••••••••••{item.key_prefix}</code>
