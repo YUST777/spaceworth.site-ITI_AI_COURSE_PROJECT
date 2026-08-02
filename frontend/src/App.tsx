@@ -99,7 +99,10 @@ type Section = "plan" | "upload" | "settings";
 type CanvasMode = "2d" | "3d";
 type Tool = "select" | "door" | "room" | "label" | "plant" | "delete";
 
-const API_URL = (import.meta.env.VITE_PREDICTION_API_URL ?? "").replace(/\/$/, "");
+const API_URL = (
+  import.meta.env.VITE_PREDICTION_API_URL ??
+  "https://iti-house-price-api-production.up.railway.app"
+).replace(/\/$/, "");
 const PLAN_API_URL = (import.meta.env.VITE_PLAN_ANALYSIS_API_URL ?? "").replace(/\/$/, "");
 const STORAGE_KEY = "spacemap-project-v2";
 
