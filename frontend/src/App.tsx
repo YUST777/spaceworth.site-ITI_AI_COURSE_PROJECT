@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Circle, Group, Layer, Line, Rect, Stage, Text } from "react-konva";
+import { Circle, Group, Layer, Line, Rect, Stage, Text, Transformer } from "react-konva";
+import type Konva from "konva";
 import { driver, type Driver } from "driver.js";
 import { AnimatePresence, motion } from "framer-motion";
 import L, { type Map as LeafletMap, type Marker as LeafletMarker } from "leaflet";
@@ -661,6 +662,8 @@ function FloorPlan({
   showDimensions: boolean;
 }) {
   const [canvasRef, canvasSize] = useElementSize<HTMLDivElement>();
+  const transformerRef = useRef<Konva.Transformer>(null);
+  const roomRefs = useRef<Map<string, Konva.Group>>(new Map());
   const scale = Math.min(1, (canvasSize.width - 26) / 640, (canvasSize.height - 24) / 600) * zoom;
   const snap = (value: number) => (snapToGrid ? Math.round(value / 8) * 8 : value);
   const roomFill = (room: PlanRoom) => {
@@ -670,6 +673,14 @@ function FloorPlan({
     if (room.id === "living") return "#f8f7f3";
     return room.accent ? "#f8f9fa" : "#fff";
   };
+
+  useEffect(() => {
+    const transformer = transformerRef.current;
+    const room = roomRefs.current.get(selectedRoom);
+    if (!transformer) return;
+    transformer.nodes(room ? [room] : []);
+    transformer.getLayer()?.batchDraw();
+  }, [rooms, selectedRoom]);
 
   return (
     <div className="drawing-area" ref={canvasRef}>
@@ -697,9 +708,17 @@ function FloorPlan({
             {rooms.map((room) => (
               <Group
                 key={room.id}
+                ref={(node) => {
+                  if (node) roomRefs.current.set(room.id, node);
+                  else roomRefs.current.delete(room.id);
+                }}
                 x={room.x}
                 y={room.y}
                 draggable
+                dragBoundFunc={(position) => ({
+                  x: Math.min(552 - room.width, Math.max(78, position.x)),
+                  y: Math.min(572 - room.height, Math.max(52, position.y)),
+                })}
                 onClick={() => setSelectedRoom(room.id)}
                 onTap={() => setSelectedRoom(room.id)}
                 onDragEnd={(event) =>
@@ -715,6 +734,24 @@ function FloorPlan({
                     ),
                   )
                 }
+                onTransformEnd={(event) => {
+                  const node = event.target as Konva.Group;
+                  const nextX = Math.min(552 - 64, Math.max(78, snap(node.x())));
+                  const nextY = Math.min(572 - 56, Math.max(52, snap(node.y())));
+                  const nextWidth = Math.min(552 - nextX, Math.max(64, snap(room.width * node.scaleX())));
+                  const nextHeight = Math.min(572 - nextY, Math.max(56, snap(room.height * node.scaleY())));
+                  node.scaleX(1);
+                  node.scaleY(1);
+                  node.x(nextX);
+                  node.y(nextY);
+                  updateRooms(
+                    rooms.map((current) =>
+                      current.id === room.id
+                        ? { ...current, x: nextX, y: nextY, width: nextWidth, height: nextHeight }
+                        : current,
+                    ),
+                  );
+                }}
               >
                 <Rect
                   width={room.width}
@@ -784,6 +821,23 @@ function FloorPlan({
                 )}
               </Group>
             ))}
+            <Transformer
+              ref={transformerRef}
+              rotateEnabled={false}
+              keepRatio={false}
+              flipEnabled={false}
+              enabledAnchors={["top-left", "top-center", "top-right", "middle-left", "middle-right", "bottom-left", "bottom-center", "bottom-right"]}
+              anchorSize={8}
+              anchorCornerRadius={2}
+              anchorFill="#ffffff"
+              anchorStroke="#2563eb"
+              borderStroke="#2563eb"
+              borderStrokeWidth={1.5}
+              padding={2}
+              boundBoxFunc={(previousBox, nextBox) =>
+                nextBox.width < 64 || nextBox.height < 56 ? previousBox : nextBox
+              }
+            />
           </Layer>
         </Stage>
       )}
@@ -824,10 +878,6 @@ function App() {
   const { form, rooms, prediction } = project;
   const safeFormView = normalizeForm(form);
   const areaSqft = Number(safeFormView.areaSqft);
-  const areaM2 = Math.round(areaSqft * 0.092903);
-  const selectedRoomData = rooms.find((room) => room.id === selectedRoom);
-  const layoutBedrooms = rooms.filter((room) => room.id.startsWith("bedroom")).length;
-  const layoutBathrooms = rooms.filter((room) => room.id.startsWith("bathroom")).length;
   const pricePerSqft = prediction.status === "success" && areaSqft > 0 ? prediction.price / areaSqft : null;
   const visiblePredictionRequest = prediction.status === "success" && prediction.request
     ? prediction.request
@@ -924,6 +974,7 @@ function App() {
     navigateTo("plan");
     window.scrollTo({ top: 0, behavior: "smooth" });
     window.setTimeout(() => {
+      const useCenteredMobileTour = window.matchMedia("(max-width: 760px)").matches;
       const tour = driver({
         animate: true,
         smoothScroll: true,
@@ -942,7 +993,7 @@ function App() {
         doneBtnText: "Start exploring",
         steps: [
           {
-            element: ".tour-welcome",
+            element: useCenteredMobileTour ? undefined : ".tour-welcome",
             popover: {
               title: "Welcome to SpaceMap",
               description: "Build a property profile, shape the editable floor plan, and keep every project synchronized automatically.",
@@ -951,7 +1002,7 @@ function App() {
             },
           },
           {
-            element: ".tour-main-ai",
+            element: useCenteredMobileTour ? undefined : ".tour-main-ai",
             popover: {
               title: "Real price prediction",
               description: "Complete the property details, then run the validated model to receive the live estimated value and price per square foot.",
@@ -964,7 +1015,7 @@ function App() {
             },
           },
           {
-            element: ".tour-cad-ai",
+            element: useCenteredMobileTour ? undefined : ".tour-cad-ai",
             waitForElement: 1200,
             popover: {
               title: "CAD image intelligence",
@@ -1401,13 +1452,6 @@ function App() {
         <div className="canvas-header">
           <div className="canvas-title-block">
             <h2>Visual floor plan</h2>
-            <div className="plan-stats" aria-label="Floor plan summary">
-              <span><strong>{areaM2}</strong> m²</span>
-              <span><strong>{layoutBedrooms}</strong> bedrooms</span>
-              <span><strong>{layoutBathrooms}</strong> bathrooms</span>
-              <span>Floor <strong>{safeFormView.floorNumber}</strong></span>
-            </div>
-            <p className="selected-space">{selectedRoomData ? `${selectedRoomData.label} selected · drag to reposition` : `${rooms.length} editable spaces`}</p>
           </div>
           <div className="canvas-actions">
             <div className="canvas-modes">
@@ -1444,7 +1488,7 @@ function App() {
         </div>
       </>
     );
-  }, [section, uploadedPlan, apiHealth, databaseSync, areaM2, safeFormView.floorNumber, rooms, canvasMode, selectedRoom, selectedRoomData, layoutBedrooms, layoutBathrooms, zoom, activeTool, snapToGrid, showGrid, showDimensions, historyVersion]);
+  }, [section, uploadedPlan, apiHealth, databaseSync, rooms, canvasMode, selectedRoom, zoom, activeTool, snapToGrid, showGrid, showDimensions, historyVersion]);
 
   return (
     <main className="app-shell">
@@ -1761,24 +1805,20 @@ function App() {
                 onDrop={(event) => { event.preventDefault(); setDraggingPlan(false); const file = event.dataTransfer.files?.[0]; if (file) acceptPlanFile(file); }}
               >
                 <span className="upload-icon"><Upload /></span>
-                <strong>{uploadedPlan ? "Replace this plan" : "Drop your CAD here"}</strong>
-                <span>or click to browse files</span>
-                <em>PNG, JPG, WEBP or PDF · max 20 MB</em>
+                <span className="upload-dropzone-copy">
+                  <strong>{uploadedPlan ? "Replace this plan" : "Drop CAD or floor plan"}</strong>
+                  <span>Click to browse or drag a file here</span>
+                </span>
+                <span className="upload-format-row">
+                  <em>PNG</em><em>JPG</em><em>WEBP</em><em>PDF</em><em>20 MB max</em>
+                </span>
               </button>
-              <div className="upload-tips">
-                <strong>For the clearest analysis</strong>
-                <span>✓ Use a straight top-down floor plan</span>
-                <span>✓ Keep dimensions and room labels visible</span>
-                <span>✓ Avoid blurry photos, glare and shadows</span>
-              </div>
-              <p className="privacy-note">Uploads remain in your browser until an image-analysis API is configured.</p>
             </>
           ) : (
             <>
               <div className="panel-heading">
                 <div><span className="eyebrow">Prediction inputs</span><h1>Property details</h1></div>
                 <div className="panel-heading-actions">
-                  <span className="auto-badge"><Sparkles /> Auto plan</span>
                   <Button variant="ghost" className="mobile-details-toggle" onClick={() => setMobileDetailsCollapsed((value) => !value)}>
                     {mobileDetailsCollapsed ? <ChevronDown /> : <ChevronUp />}
                     {mobileDetailsCollapsed ? "Show details" : "Hide details"}
@@ -1819,8 +1859,7 @@ function App() {
           {section === "upload" ? (
             <>
               <Card className="summary-card card upload-summary">
-                <span className="eyebrow">Upload summary</span>
-                <h2>Plan details</h2>
+                <div className="summary-heading"><span className="eyebrow">Upload summary</span><h2>Plan details</h2></div>
                 <dl>
                   <div><dt>File</dt><dd>{uploadedPlan?.name ?? "No file"}</dd></div>
                   <div><dt>Format</dt><dd>{uploadedPlan ? uploadedPlan.type.split("/").pop()?.toUpperCase() : "—"}</dd></div>
@@ -1847,14 +1886,12 @@ function App() {
                 <Button className="dark-button predict-button" onClick={analyzeUploadedPlan} disabled={!uploadedPlan || uploadAnalysis.status === "loading"}>
                   <Sparkles /> {uploadAnalysis.status === "loading" ? "Analyzing plan…" : "Analyze uploaded plan"}
                 </Button>
-                <p className="honesty-note">No sample valuation is shown. Results require a real image-analysis endpoint.</p>
               </Card>
             </>
           ) : (
             <>
           <Card className="summary-card card">
-            <span className="eyebrow">Live summary</span>
-            <h2>Property snapshot</h2>
+            <div className="summary-heading"><span className="eyebrow">Live summary</span><h2>Property snapshot</h2></div>
             <dl>
               <div><dt>Area</dt><dd>{areaSqft ? `${areaSqft.toLocaleString("en-IN")} sq ft` : "—"}</dd></div>
               <div><dt>Configuration</dt><dd>{safeFormView.bedrooms} bed · {safeFormView.bathrooms} bath</dd></div>
