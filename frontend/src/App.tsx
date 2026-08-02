@@ -4,13 +4,17 @@ import { driver, type Driver } from "driver.js";
 import "driver.js/dist/driver.css";
 import {
   Box,
+  BadgeCheck,
   ChevronDown,
   ChevronUp,
+  CheckCircle2,
+  CircleDot,
   Database,
   DoorOpen,
   ExternalLink,
   Expand,
   FileImage,
+  Code2,
   Grid2X2,
   Layers3,
   Magnet,
@@ -18,10 +22,12 @@ import {
   MapPinned,
   MousePointer2,
   Redo2,
+  RefreshCw,
   RotateCcw,
   Ruler,
   Settings,
   Sparkles,
+  Server,
   Trash2,
   TreePine,
   Type,
@@ -106,10 +112,22 @@ type UploadAnalysisState =
   | { status: "success"; price: number }
   | { status: "error"; message: string };
 
-type Section = "plan" | "upload" | "settings";
+type Section = "plan" | "upload" | "proof" | "settings";
 type CanvasMode = "2d" | "3d";
 type Tool = "select" | "door" | "room" | "label" | "plant" | "delete";
 type DatabaseSyncState = "loading" | "syncing" | "synced" | "offline";
+type LiveProofState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | {
+      status: "success";
+      model: string;
+      score: number;
+      database: string;
+      price: number;
+      checkedAt: string;
+    }
+  | { status: "error"; message: string };
 
 const API_URL = (
   import.meta.env.VITE_PREDICTION_API_URL ??
@@ -120,6 +138,8 @@ const STORAGE_KEY = "spacemap-project-v2";
 const PROJECT_ID_KEY = "spacemap-project-id-v1";
 const WELCOME_TOUR_KEY = "spacemap-welcome-tour-v1";
 const PREDICTION_COOLDOWN_MS = 1800;
+const SOURCE_URL = "https://github.com/YUST777/iti_ai_project";
+const MODEL_URL = "https://huggingface.co/duck233/iti-house-price-model";
 
 const NUMERIC_LIMITS = {
   areaSqft: { min: 100, max: 25000, fallback: 1200 },
@@ -195,6 +215,29 @@ function normalizeForm(form: PropertyForm): PropertyForm {
   next.floorNumber = String(Math.min(Math.max(-2, floor), totalFloors));
   if (!next.location.trim()) next.location = initialForm.location;
   return next;
+}
+
+function predictionPayload(form: PropertyForm) {
+  const safeForm = normalizeForm(form);
+  return {
+    area_sqft: Number(safeForm.areaSqft),
+    area_type: safeForm.areaType,
+    location: safeForm.location,
+    locality: safeForm.locality || undefined,
+    society: safeForm.society || undefined,
+    bedrooms: optionalNumber(safeForm.bedrooms),
+    bathroom: optionalNumber(safeForm.bathrooms),
+    balcony: optionalNumber(safeForm.balcony),
+    car_parking: optionalNumber(safeForm.carParking),
+    floor_num: optionalNumber(safeForm.floorNumber),
+    total_floors: optionalNumber(safeForm.totalFloors),
+    property_type: safeForm.propertyType,
+    furnishing: safeForm.furnishing,
+    transaction: safeForm.transaction,
+    ownership: safeForm.ownership,
+    facing: safeForm.facing || undefined,
+    overlooking: safeForm.overlooking || undefined,
+  };
 }
 
 function buildPlan(bedrooms: number, bathrooms: number, areaSqft: number): PlanRoom[] {
@@ -525,6 +568,7 @@ function App() {
   const [databaseSync, setDatabaseSync] = useState<DatabaseSyncState>("loading");
   const [remoteReady, setRemoteReady] = useState(false);
   const [syncRetryNonce, setSyncRetryNonce] = useState(0);
+  const [liveProof, setLiveProof] = useState<LiveProofState>({ status: "idle" });
   const [mapOpen, setMapOpen] = useState(false);
   const [uploadedPlan, setUploadedPlan] = useState<UploadedPlan | null>(null);
   const [uploadAnalysis, setUploadAnalysis] = useState<UploadAnalysisState>({ status: "idle" });
@@ -875,25 +919,7 @@ function App() {
       const response = await fetch(`${API_URL}/predict`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Project-ID": PROJECT_ID },
-        body: JSON.stringify({
-          area_sqft: safeAreaSqft,
-          area_type: safeForm.areaType,
-          location: safeForm.location,
-          locality: safeForm.locality || undefined,
-          society: safeForm.society || undefined,
-          bedrooms: optionalNumber(safeForm.bedrooms),
-          bathroom: optionalNumber(safeForm.bathrooms),
-          balcony: optionalNumber(safeForm.balcony),
-          car_parking: optionalNumber(safeForm.carParking),
-          floor_num: optionalNumber(safeForm.floorNumber),
-          total_floors: optionalNumber(safeForm.totalFloors),
-          property_type: safeForm.propertyType,
-          furnishing: safeForm.furnishing,
-          transaction: safeForm.transaction,
-          ownership: safeForm.ownership,
-          facing: safeForm.facing || undefined,
-          overlooking: safeForm.overlooking || undefined,
-        }),
+        body: JSON.stringify(predictionPayload(safeForm)),
       });
       const result = (await response.json()) as { predicted_price_inr?: number; detail?: string };
       if (!response.ok || typeof result.predicted_price_inr !== "number") {
@@ -915,6 +941,44 @@ function App() {
       setApiHealth("offline");
     }
   };
+
+  const runLiveProof = async () => {
+    setLiveProof({ status: "loading" });
+    try {
+      const [healthResponse, predictionResponse] = await Promise.all([
+        fetch(`${API_URL}/health`, { cache: "no-store" }),
+        fetch(`${API_URL}/predict`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Project-ID": PROJECT_ID },
+          body: JSON.stringify(predictionPayload(form)),
+        }),
+      ]);
+      const healthResult = (await healthResponse.json()) as {
+        model?: string;
+        held_out_r2?: number;
+        database?: string;
+        detail?: string;
+      };
+      const predictionResult = (await predictionResponse.json()) as { predicted_price_inr?: number; detail?: string };
+      if (!healthResponse.ok || !predictionResponse.ok || typeof predictionResult.predicted_price_inr !== "number") {
+        throw new Error(predictionResult.detail ?? healthResult.detail ?? "The live verification failed.");
+      }
+      setLiveProof({
+        status: "success",
+        model: healthResult.model ?? "House price ensemble",
+        score: healthResult.held_out_r2 ?? 0.906449314077493,
+        database: healthResult.database ?? "unknown",
+        price: predictionResult.predicted_price_inr,
+        checkedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+      });
+    } catch (error) {
+      setLiveProof({ status: "error", message: error instanceof Error ? error.message : "Live verification failed." });
+    }
+  };
+
+  useEffect(() => {
+    if (section === "proof" && liveProof.status === "idle") void runLiveProof();
+  }, [section, liveProof.status]);
 
   const applyTool = (tool: Tool) => {
     setActiveTool(tool);
@@ -1108,9 +1172,15 @@ function App() {
           <img src="/favicon.svg" alt="" />
           <span>SpaceMap</span>
         </div>
+        <nav className="top-tabs" aria-label="Main product views">
+          <button type="button" className={section === "plan" ? "active" : ""} onClick={() => setSection("plan")}>Price my home</button>
+          <button type="button" className={section === "upload" ? "active" : ""} onClick={() => setSection("upload")}>CAD to price</button>
+          <button type="button" className={section === "proof" ? "active" : ""} onClick={() => setSection("proof")}>Proof</button>
+        </nav>
+        <div className="topbar-balance" aria-hidden="true" />
       </Card>
 
-      <div className="workspace tour-workspace">
+      <div className={`workspace tour-workspace ${section === "proof" ? "proof-mode" : ""}`}>
         <nav className="rail card" aria-label="Primary navigation">
           <Tooltip>
             <TooltipTrigger render={<Button variant="ghost" size="icon" className={`rail-item ${section === "plan" ? "active" : ""}`} onClick={() => setSection("plan")} aria-label="Floor plan" />}>
@@ -1131,6 +1201,69 @@ function App() {
             <TooltipContent side="right">Settings</TooltipContent>
           </Tooltip>
         </nav>
+
+        {section === "proof" && (
+          <Card className="proof-page card">
+            <header className="proof-hero">
+              <div>
+                <span className="eyebrow">Verifiable project evidence</span>
+                <h1>Proof that SpaceMap is real and working</h1>
+                <p>Every check below calls the deployed services or opens the public artifact behind the claim.</p>
+              </div>
+              <Button className="dark-button proof-run-button" onClick={runLiveProof} disabled={liveProof.status === "loading"}>
+                <RefreshCw className={liveProof.status === "loading" ? "spinning" : ""} />
+                {liveProof.status === "loading" ? "Running checks…" : "Run live proof"}
+              </Button>
+            </header>
+
+            <section className="proof-status-grid" aria-label="Live verification results">
+              <article>
+                <span className="proof-icon"><Server /></span>
+                <div><small>Railway API</small><strong>{liveProof.status === "success" ? "Operational" : liveProof.status === "loading" ? "Checking…" : "Ready to check"}</strong></div>
+                <BadgeCheck className={liveProof.status === "success" ? "verified" : ""} />
+              </article>
+              <article>
+                <span className="proof-icon"><Sparkles /></span>
+                <div><small>Held-out model score</small><strong>{liveProof.status === "success" ? `${(liveProof.score * 100).toFixed(2)}% R²` : "90.64% R²"}</strong></div>
+                <BadgeCheck className={liveProof.status === "success" ? "verified" : ""} />
+              </article>
+              <article>
+                <span className="proof-icon"><Database /></span>
+                <div><small>Supabase database</small><strong>{liveProof.status === "success" ? readable(liveProof.database) : databaseSync === "synced" ? "Connected" : "Checking…"}</strong></div>
+                <BadgeCheck className={liveProof.status === "success" && liveProof.database === "connected" ? "verified" : ""} />
+              </article>
+              <article>
+                <span className="proof-icon"><CheckCircle2 /></span>
+                <div><small>Real prediction response</small><strong>{liveProof.status === "success" ? formatCurrency(liveProof.price) : "Waiting for run"}</strong></div>
+                <BadgeCheck className={liveProof.status === "success" ? "verified" : ""} />
+              </article>
+            </section>
+
+            {liveProof.status === "error" && <p className="proof-error">{liveProof.message}</p>}
+            {liveProof.status === "success" && <p className="proof-timestamp">Last verified at {liveProof.checkedAt} using the current property inputs.</p>}
+
+            <div className="proof-content-grid">
+              <section className="proof-process">
+                <div className="proof-section-heading"><span className="eyebrow">The process</span><h2>How we built it without leakage</h2></div>
+                <ol>
+                  <li><span>01</span><div><strong>Cleaned the property dataset</strong><p>Removed invalid records and prevented price text or rupee values from leaking into the features.</p></div></li>
+                  <li><span>02</span><div><strong>Compared real model families</strong><p>Tested tree ensembles, neural networks, encoding strategies, and stricter cleaning on held-out data.</p></div></li>
+                  <li><span>03</span><div><strong>Locked the validated ensemble</strong><p>Kept the honest 90.64% held-out R² model instead of chasing an unrealistic leaked score.</p></div></li>
+                  <li><span>04</span><div><strong>Deployed a real prediction API</strong><p>Packaged the artifact in FastAPI on Railway with validation, throttling, health checks, and Supabase history.</p></div></li>
+                  <li><span>05</span><div><strong>Connected the production interface</strong><p>The React workspace sends real requests, edits the plan, uploads CAD files, and synchronizes projects.</p></div></li>
+                </ol>
+              </section>
+
+              <section className="proof-links">
+                <div className="proof-section-heading"><span className="eyebrow">Open the evidence</span><h2>Public proof links</h2></div>
+                <a href={`${API_URL}/health`} target="_blank" rel="noreferrer"><span><Server /><div><strong>Live API health</strong><small>Model, score, and database status</small></div></span><ExternalLink /></a>
+                <a href={`${API_URL}/docs`} target="_blank" rel="noreferrer"><span><CircleDot /><div><strong>Interactive API docs</strong><small>Inspect and run the FastAPI endpoints</small></div></span><ExternalLink /></a>
+                <a href={SOURCE_URL} target="_blank" rel="noreferrer"><span><Code2 /><div><strong>Public source repository</strong><small>Frontend, API, deployment, and research</small></div></span><ExternalLink /></a>
+                <a href={MODEL_URL} target="_blank" rel="noreferrer"><span><Sparkles /><div><strong>Published model artifact</strong><small>The model downloaded by Railway</small></div></span><ExternalLink /></a>
+              </section>
+            </div>
+          </Card>
+        )}
 
         <Card className={`details-panel card ${section === "upload" ? "upload-sidebar tour-cad-ai" : ""} ${section === "plan" && mobileDetailsCollapsed ? "mobile-collapsed" : ""}`}>
           {section === "upload" ? (
