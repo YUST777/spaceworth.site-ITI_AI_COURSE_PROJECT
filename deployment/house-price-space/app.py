@@ -629,8 +629,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=ALLOWED_ORIGINS != ["*"],
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-API-Key", "X-Project-ID"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -840,6 +840,7 @@ def list_api_keys() -> dict[str, list[dict[str, object]]]:
     }
 
 
+@app.post("/api-keys/{key_id}/toggle", dependencies=[Depends(enforce_rate_limit)])
 @app.patch("/api-keys/{key_id}", dependencies=[Depends(enforce_rate_limit)])
 def toggle_api_key(key_id: str, enabled: bool = True) -> dict[str, object]:
     with database_connection() as connection, connection.cursor() as cursor:

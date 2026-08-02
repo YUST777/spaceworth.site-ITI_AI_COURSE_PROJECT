@@ -230,7 +230,8 @@ export function DeveloperPortal({ apiUrl, sourceUrl }: DeveloperPortalProps) {
     // Optimistic update
     setApiKeys((prev) => prev.map((k) => (k.id === id ? { ...k, enabled: !currentlyEnabled } : k)));
     try {
-      await fetch(apiUrl + "/api-keys/" + id + "?enabled=" + (!currentlyEnabled), { method: "PATCH" });
+      const res = await fetch(apiUrl + "/api-keys/" + id + "/toggle?enabled=" + (!currentlyEnabled), { method: "POST" });
+      if (!res.ok) throw new Error("Failed to toggle key");
     } catch {
       setApiKeys((prev) => prev.map((k) => (k.id === id ? { ...k, enabled: currentlyEnabled } : k)));
     }
