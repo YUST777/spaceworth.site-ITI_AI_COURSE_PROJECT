@@ -1,5 +1,8 @@
 .git/
 .venv/
+api/
+backend/
+deployment/
 notebooks/data/
 models/
 *.csv

@@ -1,27 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Circle, Group, Layer, Line, Rect, Stage, Text } from "react-konva";
 import {
-  BarChart3,
   Box,
-  CheckCircle2,
   DoorOpen,
-  Download,
+  ExternalLink,
   Expand,
-  Home,
+  FileImage,
   Layers3,
-  LayoutGrid,
-  List,
   MapPin,
+  MapPinned,
   MousePointer2,
-  Plus,
-  Save,
   Settings,
   Sparkles,
   Trash2,
   TreePine,
   Type,
+  Upload,
   Wifi,
   WifiOff,
+  X,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -37,22 +34,26 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 type PropertyForm = {
-  title: string;
-  description: string;
   areaSqft: string;
+  areaType: "carpet" | "super";
   location: string;
   locality: string;
   society: string;
   bedrooms: string;
   bathrooms: string;
+  balcony: string;
+  carParking: string;
   floorNumber: string;
   totalFloors: string;
+  propertyType: "flat" | "villa" | "house" | "builder_floor" | "penthouse" | "studio" | "plot" | "unknown";
   furnishing: "unfurnished" | "semi_furnished" | "furnished" | "unknown";
+  transaction: "resale" | "new_property" | "other" | "unknown";
+  ownership: "freehold" | "cooperative_society" | "leasehold" | "unknown";
+  facing: string;
+  overlooking: string;
 };
 
 type PlanRoom = {
@@ -74,33 +75,52 @@ type PredictionState =
   | { status: "success"; price: number }
   | { status: "error"; message: string };
 
-type Unit = {
-  id: number;
-  name: string;
+type ProjectState = {
   form: PropertyForm;
   rooms: PlanRoom[];
   prediction: PredictionState;
 };
 
-type Section = "home" | "units" | "plans" | "insights" | "settings";
+type UploadedPlan = {
+  name: string;
+  size: number;
+  type: string;
+  url: string;
+};
+
+type UploadAnalysisState =
+  | { status: "idle" }
+  | { status: "ready" }
+  | { status: "loading" }
+  | { status: "success"; price: number }
+  | { status: "error"; message: string };
+
+type Section = "plan" | "upload" | "settings";
 type CanvasMode = "2d" | "3d";
 type Tool = "select" | "door" | "room" | "label" | "plant" | "delete";
 
 const API_URL = (import.meta.env.VITE_PREDICTION_API_URL ?? "").replace(/\/$/, "");
-const STORAGE_KEY = "spacemap-project-v1";
+const PLAN_API_URL = (import.meta.env.VITE_PLAN_ANALYSIS_API_URL ?? "").replace(/\/$/, "");
+const STORAGE_KEY = "spacemap-project-v2";
 
 const initialForm: PropertyForm = {
-  title: "Modern family home",
-  description: "A practical home layout with bright living spaces and flexible rooms.",
   areaSqft: "1200",
+  areaType: "super",
   location: "thane",
-  locality: "kolshet_road",
-  society: "lodha_amara",
+  locality: "kolshet road",
+  society: "lodha amara",
   bedrooms: "2",
   bathrooms: "2",
+  balcony: "1",
+  carParking: "1",
   floorNumber: "8",
   totalFloors: "24",
+  propertyType: "flat",
   furnishing: "semi_furnished",
+  transaction: "resale",
+  ownership: "freehold",
+  facing: "east",
+  overlooking: "garden",
 };
 
 const formatCurrency = (value: number) =>
@@ -110,92 +130,123 @@ const formatCurrency = (value: number) =>
     maximumFractionDigits: 0,
   }).format(value);
 
-function buildPlan(bedrooms: number, areaSqft: number): PlanRoom[] {
-  const count = Math.min(4, Math.max(1, Math.round(bedrooms || 2)));
+const readable = (value: string) =>
+  value
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+
+const optionalNumber = (value: string) => (value.trim() === "" ? undefined : Number(value));
+
+function buildPlan(bedrooms: number, bathrooms: number, areaSqft: number): PlanRoom[] {
+  const bedroomCount = Math.min(4, Math.max(1, Math.round(bedrooms || 2)));
+  const bathroomCount = Math.min(3, Math.max(1, Math.round(bathrooms || 1)));
   const areaM2 = Math.max(25, Math.round(areaSqft * 0.092903));
   const bedroomArea = Math.max(9, Math.round(areaM2 * 0.16));
-  const templates: PlanRoom[] = [
+  const bedroomTemplates: PlanRoom[] = [
     { id: "bedroom-1", label: "Bedroom 1", detail: `${bedroomArea} m²`, x: 102, y: 68, width: 178, height: 145, hasDoor: true },
     { id: "bedroom-2", label: "Bedroom 2", detail: `${Math.max(9, bedroomArea - 1)} m²`, x: 348, y: 68, width: 178, height: 145, hasDoor: true },
     { id: "bedroom-3", label: "Bedroom 3", detail: `${Math.max(8, bedroomArea - 2)} m²`, x: 102, y: 226, width: 150, height: 115, hasDoor: true },
     { id: "bedroom-4", label: "Bedroom 4", detail: `${Math.max(8, bedroomArea - 2)} m²`, x: 376, y: 226, width: 150, height: 115, hasDoor: true },
   ];
-  const rooms = templates.slice(0, count);
-  rooms.push(
-    { id: "bathroom-1", label: "Bathroom", detail: "4.0 m²", x: 280, y: 68, width: 68, height: 145, hasDoor: true },
+  const bathroomTemplates: PlanRoom[] = [
+    { id: "bathroom-1", label: "Bathroom 1", detail: "4.0 m²", x: 280, y: 68, width: 68, height: 145, hasDoor: true },
+    bedroomCount <= 2
+      ? { id: "bathroom-2", label: "Bathroom 2", detail: "4.0 m²", x: 348, y: 226, width: 178, height: 115, hasDoor: true }
+      : { id: "bathroom-2", label: "Bathroom 2", detail: "4.0 m²", x: 262, y: 226, width: 102, height: 115, hasDoor: true },
+    { id: "bathroom-3", label: "Powder room", detail: "2.5 m²", x: 280, y: 226, width: 78, height: 88, hasDoor: true },
+  ];
+
+  return [
+    ...bedroomTemplates.slice(0, bedroomCount),
+    ...bathroomTemplates.slice(0, bathroomCount),
     { id: "living", label: "Living room", detail: `${Math.max(18, Math.round(areaM2 * 0.24))} m²`, x: 102, y: 354, width: 238, height: 202, accent: true, hasDoor: true, hasPlant: true },
     { id: "kitchen", label: "Kitchen & dining", detail: `${Math.max(14, Math.round(areaM2 * 0.18))} m²`, x: 340, y: 354, width: 186, height: 202, accent: true },
-    count <= 2
-      ? { id: "bathroom-2", label: "Bathroom", detail: "4.0 m²", x: 348, y: 226, width: 178, height: 115, hasDoor: true }
-      : { id: "bathroom-2", label: "Bathroom", detail: "4.0 m²", x: 262, y: 226, width: 102, height: 115, hasDoor: true },
-  );
-  return rooms;
+  ];
 }
 
-function makeInitialUnit(): Unit {
-  return {
-    id: 1,
-    name: "Unit 1",
+function loadProject(): ProjectState {
+  const fallback: ProjectState = {
     form: initialForm,
-    rooms: buildPlan(2, 1200),
+    rooms: buildPlan(2, 2, 1200),
     prediction: { status: "idle" },
   };
-}
 
-function loadUnits(): Unit[] {
   try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (!saved) return [makeInitialUnit()];
-    const parsed = JSON.parse(saved) as Unit[];
-    return Array.isArray(parsed) && parsed.length ? parsed : [makeInitialUnit()];
+    const saved = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem("spacemap-project-v1");
+    if (!saved) return fallback;
+    const parsed = JSON.parse(saved) as ProjectState | Array<{ form?: Partial<PropertyForm>; rooms?: PlanRoom[]; prediction?: PredictionState }>;
+    const project = Array.isArray(parsed) ? parsed[0] : parsed;
+    if (!project) return fallback;
+    return {
+      form: { ...initialForm, ...project.form },
+      rooms: Array.isArray(project.rooms) && project.rooms.length ? project.rooms : fallback.rooms,
+      prediction: project.prediction ?? { status: "idle" },
+    };
   } catch {
-    return [makeInitialUnit()];
+    return fallback;
   }
 }
 
 function useElementSize<T extends HTMLElement>() {
   const elementRef = useRef<T>(null);
   const [size, setSize] = useState({ width: 680, height: 570 });
+
   useEffect(() => {
     const element = elementRef.current;
     if (!element) return;
     const observer = new ResizeObserver(([entry]) => {
-      setSize({ width: Math.max(280, entry.contentRect.width), height: Math.max(340, entry.contentRect.height) });
+      setSize({
+        width: Math.max(280, entry.contentRect.width),
+        height: Math.max(340, entry.contentRect.height),
+      });
     });
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
+
   return [elementRef, size] as const;
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children, wide = false }: { label: string; children: React.ReactNode; wide?: boolean }) {
   return (
-    <label className="field">
+    <label className={`field ${wide ? "wide-field" : ""}`}>
       <Label>{label}</Label>
       {children}
     </label>
   );
 }
 
-function ToolButton({ label, active, destructive, onClick, children }: { label: string; active?: boolean; destructive?: boolean; onClick: () => void; children: React.ReactNode }) {
+function ToolButton({
+  label,
+  active,
+  destructive,
+  onClick,
+  children,
+}: {
+  label: string;
+  active?: boolean;
+  destructive?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
   return (
     <Tooltip>
-      <TooltipTrigger render={<Button variant="ghost" size="icon" className={`tool ${active ? "selected" : ""} ${destructive ? "danger" : ""}`} onClick={onClick} aria-label={label} />}>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon"
+            className={`tool ${active ? "selected" : ""} ${destructive ? "danger" : ""}`}
+            onClick={onClick}
+            aria-label={label}
+          />
+        }
+      >
         {children}
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
-  );
-}
-
-function MiniPlan({ rooms }: { rooms: PlanRoom[] }) {
-  return (
-    <svg aria-hidden="true" className="mini-plan" viewBox="0 0 90 90">
-      <rect x="7" y="6" width="76" height="77" fill="#fff" stroke="#202124" strokeWidth="3" />
-      {rooms.slice(0, 7).map((room) => (
-        <rect key={room.id} x={8 + ((room.x - 78) / 474) * 74} y={7 + ((room.y - 52) / 520) * 75} width={Math.max(5, (room.width / 474) * 74)} height={Math.max(5, (room.height / 520) * 75)} fill="#f2f3f4" stroke="#555" strokeWidth="1" />
-      ))}
-    </svg>
   );
 }
 
@@ -218,36 +269,124 @@ function ThreeDimensionalPlan({ rooms }: { rooms: PlanRoom[] }) {
           </div>
         ))}
       </div>
-      <p>Live extrusion of the current 2D room geometry</p>
+      <p>Live 3D view of the current editable room layout</p>
     </div>
   );
 }
 
-function FloorPlan({ rooms, updateRooms, selectedRoom, setSelectedRoom, mode, zoom }: { rooms: PlanRoom[]; updateRooms: (rooms: PlanRoom[]) => void; selectedRoom: string; setSelectedRoom: (id: string) => void; mode: CanvasMode; zoom: number }) {
+function FloorPlan({
+  rooms,
+  updateRooms,
+  selectedRoom,
+  setSelectedRoom,
+  mode,
+  zoom,
+}: {
+  rooms: PlanRoom[];
+  updateRooms: (rooms: PlanRoom[]) => void;
+  selectedRoom: string;
+  setSelectedRoom: (id: string) => void;
+  mode: CanvasMode;
+  zoom: number;
+}) {
   const [canvasRef, canvasSize] = useElementSize<HTMLDivElement>();
   const scale = Math.min(1, (canvasSize.width - 26) / 640, (canvasSize.height - 24) / 600) * zoom;
+
   return (
     <div className="drawing-area" ref={canvasRef}>
       {mode === "3d" ? (
         <ThreeDimensionalPlan rooms={rooms} />
       ) : (
         <Stage width={canvasSize.width} height={canvasSize.height}>
-          <Layer x={Math.max(8, (canvasSize.width - 640 * scale) / 2)} y={8} scaleX={scale} scaleY={scale}>
+          <Layer
+            x={Math.max(8, (canvasSize.width - 640 * scale) / 2)}
+            y={8}
+            scaleX={scale}
+            scaleY={scale}
+          >
             <Line points={[78, 35, 552, 35]} stroke="#8f949b" strokeWidth={1} />
             <Line points={[78, 29, 78, 41]} stroke="#8f949b" strokeWidth={1} />
             <Line points={[552, 29, 552, 41]} stroke="#8f949b" strokeWidth={1} />
             <Text text="Editable floor plan" x={270} y={17} fontSize={12} fill="#686c73" />
             <Rect x={78} y={52} width={474} height={520} fill="#fff" stroke="#202328" strokeWidth={7} />
             {rooms.map((room) => (
-              <Group key={room.id} x={room.x} y={room.y} draggable onClick={() => setSelectedRoom(room.id)} onTap={() => setSelectedRoom(room.id)} onDragEnd={(event) => updateRooms(rooms.map((current) => current.id === room.id ? { ...current, x: event.target.x(), y: event.target.y() } : current))}>
-                <Rect width={room.width} height={room.height} fill={room.accent ? "#fafafa" : "#fff"} stroke={selectedRoom === room.id ? "#2563eb" : "#25282d"} strokeWidth={selectedRoom === room.id ? 3 : 4} />
-                {room.id.startsWith("bedroom") && <Rect x={18} y={18} width={Math.min(88, room.width - 36)} height={34} fill="#e5e7eb" stroke="#b0b5bd" />}
-                {room.id === "living" && <><Rect x={54} y={80} width={92} height={48} cornerRadius={5} fill="#e8eaed" stroke="#b1b6bd" /><Circle x={31} y={105} radius={17} fill="#f0f1f2" stroke="#b1b6bd" /></>}
-                {room.id === "kitchen" && <><Rect x={18} y={18} width={room.width - 36} height={22} fill="#e4e6e8" /><Rect x={room.width - 43} y={63} width={22} height={48} fill="#e4e6e8" /></>}
-                {room.hasPlant && <><Circle x={room.width - 25} y={room.height - 26} radius={13} fill="#eef3eb" stroke="#778b71" /><Text text="✦" x={room.width - 31} y={room.height - 33} fontSize={14} fill="#60745b" /></>}
-                {room.hasDoor && <Line points={[room.width / 2 - 13, room.height, room.width / 2, room.height - 15, room.width / 2 + 13, room.height]} stroke="#555" strokeWidth={2} tension={0.5} />}
-                <Text text={room.label} width={room.width} align="center" y={room.height / 2 - 14} fontSize={13} fontStyle="bold" fill="#1d2025" />
-                <Text text={room.detail} width={room.width} align="center" y={room.height / 2 + 5} fontSize={11} fill="#575c65" />
+              <Group
+                key={room.id}
+                x={room.x}
+                y={room.y}
+                draggable
+                onClick={() => setSelectedRoom(room.id)}
+                onTap={() => setSelectedRoom(room.id)}
+                onDragEnd={(event) =>
+                  updateRooms(
+                    rooms.map((current) =>
+                      current.id === room.id
+                        ? { ...current, x: event.target.x(), y: event.target.y() }
+                        : current,
+                    ),
+                  )
+                }
+              >
+                <Rect
+                  width={room.width}
+                  height={room.height}
+                  fill={room.accent ? "#fafafa" : "#fff"}
+                  stroke={selectedRoom === room.id ? "#2563eb" : "#25282d"}
+                  strokeWidth={selectedRoom === room.id ? 3 : 4}
+                />
+                {room.id.startsWith("bedroom") && (
+                  <Rect
+                    x={18}
+                    y={18}
+                    width={Math.min(88, room.width - 36)}
+                    height={34}
+                    fill="#e5e7eb"
+                    stroke="#b0b5bd"
+                  />
+                )}
+                {room.id === "living" && (
+                  <>
+                    <Rect x={54} y={80} width={92} height={48} cornerRadius={5} fill="#e8eaed" stroke="#b1b6bd" />
+                    <Circle x={31} y={105} radius={17} fill="#f0f1f2" stroke="#b1b6bd" />
+                  </>
+                )}
+                {room.id === "kitchen" && (
+                  <>
+                    <Rect x={18} y={18} width={room.width - 36} height={22} fill="#e4e6e8" />
+                    <Rect x={room.width - 43} y={63} width={22} height={48} fill="#e4e6e8" />
+                  </>
+                )}
+                {room.hasPlant && (
+                  <>
+                    <Circle x={room.width - 25} y={room.height - 26} radius={13} fill="#eef3eb" stroke="#778b71" />
+                    <Text text="✦" x={room.width - 31} y={room.height - 33} fontSize={14} fill="#60745b" />
+                  </>
+                )}
+                {room.hasDoor && (
+                  <Line
+                    points={[room.width / 2 - 13, room.height, room.width / 2, room.height - 15, room.width / 2 + 13, room.height]}
+                    stroke="#555"
+                    strokeWidth={2}
+                    tension={0.5}
+                  />
+                )}
+                <Text
+                  text={room.width < 90 ? room.label.replace("Bathroom", "Bath") : room.label}
+                  width={room.width}
+                  align="center"
+                  y={room.height / 2 - 14}
+                  fontSize={13}
+                  fontStyle="bold"
+                  fill="#1d2025"
+                />
+                <Text
+                  text={room.detail}
+                  width={room.width}
+                  align="center"
+                  y={room.height / 2 + 5}
+                  fontSize={11}
+                  fill="#575c65"
+                />
               </Group>
             ))}
           </Layer>
@@ -258,69 +397,187 @@ function FloorPlan({ rooms, updateRooms, selectedRoom, setSelectedRoom, mode, zo
 }
 
 function App() {
-  const [units, setUnits] = useState<Unit[]>(loadUnits);
-  const [activeUnitId, setActiveUnitId] = useState(units[0].id);
-  const [activeTab, setActiveTab] = useState<"basic" | "more">("basic");
-  const [section, setSection] = useState<Section>("plans");
+  const [project, setProject] = useState<ProjectState>(loadProject);
+  const [section, setSection] = useState<Section>("plan");
   const [canvasMode, setCanvasMode] = useState<CanvasMode>("2d");
   const [activeTool, setActiveTool] = useState<Tool>("select");
   const [selectedRoom, setSelectedRoom] = useState("living");
   const [zoom, setZoom] = useState(1);
-  const [notice, setNotice] = useState("Ready");
-  const [apiHealth, setApiHealth] = useState<"idle" | "checking" | "online" | "offline">("idle");
+  const [apiHealth, setApiHealth] = useState<"checking" | "online" | "offline">("checking");
+  const [mapOpen, setMapOpen] = useState(false);
+  const [uploadedPlan, setUploadedPlan] = useState<UploadedPlan | null>(null);
+  const [uploadAnalysis, setUploadAnalysis] = useState<UploadAnalysisState>({ status: "idle" });
+  const [draggingPlan, setDraggingPlan] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const initialPlanCheck = useRef(true);
 
-  const unit = units.find((candidate) => candidate.id === activeUnitId) ?? units[0];
-  const form = unit.form;
-  const rooms = unit.rooms;
-  const prediction = unit.prediction;
+  const { form, rooms, prediction } = project;
   const areaSqft = Number(form.areaSqft) || 0;
   const areaM2 = Math.round(areaSqft * 0.092903);
   const pricePerSqft = prediction.status === "success" && areaSqft > 0 ? prediction.price / areaSqft : null;
+  const mapQuery = [form.locality, form.location, "India"].filter(Boolean).join(", ");
+  const mapEmbedUrl = `https://www.google.com/maps?q=${encodeURIComponent(mapQuery)}&output=embed`;
+  const mapPageUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapQuery)}`;
 
-  const updateUnit = (updater: (current: Unit) => Unit) => setUnits((current) => current.map((candidate) => candidate.id === activeUnitId ? updater(candidate) : candidate));
-  const updateForm = <K extends keyof PropertyForm>(key: K, value: PropertyForm[K]) => updateUnit((current) => ({ ...current, form: { ...current.form, [key]: value }, prediction: { status: "idle" } }));
-  const updateRooms = (nextRooms: PlanRoom[]) => updateUnit((current) => ({ ...current, rooms: nextRooms }));
-
-  const generatePlan = () => {
-    const next = buildPlan(Number(form.bedrooms), areaSqft);
-    updateRooms(next);
-    setSelectedRoom(next.find((room) => room.id === "living")?.id ?? next[0]?.id ?? "");
-    setSection("plans");
-    setNotice(`Generated ${form.bedrooms || 1}-bedroom plan from the current inputs`);
+  const updateForm = <K extends keyof PropertyForm>(key: K, value: PropertyForm[K]) => {
+    setProject((current) => ({
+      ...current,
+      form: { ...current.form, [key]: value },
+      prediction: { status: "idle" },
+    }));
   };
 
-  const predict = async () => {
-    generatePlan();
-    if (!API_URL) {
-      updateUnit((current) => ({ ...current, prediction: { status: "error", message: "Real model API is not configured yet. No fake price was generated." } }));
-      setNotice("Prediction stopped: real model API is not connected");
+  const updateRooms = (nextRooms: PlanRoom[]) => {
+    setProject((current) => ({ ...current, rooms: nextRooms }));
+  };
+
+  const acceptPlanFile = (file: File) => {
+    const allowedTypes = ["image/png", "image/jpeg", "image/webp", "application/pdf"];
+    if (!allowedTypes.includes(file.type)) {
+      setUploadAnalysis({ status: "error", message: "Use a PNG, JPG, WEBP or PDF floor plan." });
       return;
     }
-    updateUnit((current) => ({ ...current, prediction: { status: "loading" } }));
+    if (file.size > 20 * 1024 * 1024) {
+      setUploadAnalysis({ status: "error", message: "The file must be 20 MB or smaller." });
+      return;
+    }
+    if (uploadedPlan) URL.revokeObjectURL(uploadedPlan.url);
+    setUploadedPlan({ name: file.name, size: file.size, type: file.type, url: URL.createObjectURL(file) });
+    setUploadAnalysis({ status: "ready" });
+    setSection("upload");
+  };
+
+  const removeUploadedPlan = () => {
+    if (uploadedPlan) URL.revokeObjectURL(uploadedPlan.url);
+    setUploadedPlan(null);
+    setUploadAnalysis({ status: "idle" });
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const analyzeUploadedPlan = async () => {
+    if (!uploadedPlan || !fileInputRef.current?.files?.[0]) {
+      setUploadAnalysis({ status: "error", message: "Upload a property plan first." });
+      return;
+    }
+    if (!PLAN_API_URL) {
+      setUploadAnalysis({ status: "error", message: "The image-analysis API is not connected yet. Your file stays local and no fake valuation was created." });
+      return;
+    }
+
+    setUploadAnalysis({ status: "loading" });
+    try {
+      const body = new FormData();
+      body.append("file", fileInputRef.current.files[0]);
+      body.append("property", JSON.stringify(form));
+      const response = await fetch(`${PLAN_API_URL}/analyze`, { method: "POST", body });
+      const result = (await response.json()) as { predicted_price_inr?: number; detail?: string };
+      if (!response.ok || typeof result.predicted_price_inr !== "number") {
+        throw new Error(result.detail ?? "The image analysis service returned an invalid response.");
+      }
+      setUploadAnalysis({ status: "success", price: result.predicted_price_inr });
+    } catch (error) {
+      setUploadAnalysis({ status: "error", message: error instanceof Error ? error.message : "Image analysis failed." });
+    }
+  };
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
+  }, [project]);
+
+  useEffect(() => {
+    if (initialPlanCheck.current) {
+      initialPlanCheck.current = false;
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      const nextRooms = buildPlan(Number(form.bedrooms), Number(form.bathrooms), Number(form.areaSqft));
+      setProject((current) => ({ ...current, rooms: nextRooms }));
+      setSelectedRoom(nextRooms.find((room) => room.id === "living")?.id ?? nextRooms[0]?.id ?? "");
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+  }, [form.areaSqft, form.bedrooms, form.bathrooms]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      if (!API_URL) {
+        setApiHealth("offline");
+        return;
+      }
+      try {
+        const response = await fetch(`${API_URL}/health`);
+        if (!cancelled) setApiHealth(response.ok ? "online" : "offline");
+      } catch {
+        if (!cancelled) setApiHealth("offline");
+      }
+    };
+    void check();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const predict = async () => {
+    if (areaSqft < 100 || !form.location.trim()) {
+      setProject((current) => ({
+        ...current,
+        prediction: { status: "error", message: "Enter an area of at least 100 sq ft and a location." },
+      }));
+      return;
+    }
+    if (!API_URL) {
+      setProject((current) => ({
+        ...current,
+        prediction: { status: "error", message: "The real model API is not connected yet. No fake price was generated." },
+      }));
+      return;
+    }
+
+    setProject((current) => ({ ...current, prediction: { status: "loading" } }));
     try {
       const response = await fetch(`${API_URL}/predict`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           area_sqft: areaSqft,
-          area_type: "super",
+          area_type: form.areaType,
           location: form.location,
           locality: form.locality || undefined,
           society: form.society || undefined,
-          bedrooms: Number(form.bedrooms) || undefined,
-          bathroom: Number(form.bathrooms) || undefined,
-          floor_num: Number(form.floorNumber) || undefined,
-          total_floors: Number(form.totalFloors) || undefined,
+          bedrooms: optionalNumber(form.bedrooms),
+          bathroom: optionalNumber(form.bathrooms),
+          balcony: optionalNumber(form.balcony),
+          car_parking: optionalNumber(form.carParking),
+          floor_num: optionalNumber(form.floorNumber),
+          total_floors: optionalNumber(form.totalFloors),
+          property_type: form.propertyType,
           furnishing: form.furnishing,
+          transaction: form.transaction,
+          ownership: form.ownership,
+          facing: form.facing || undefined,
+          overlooking: form.overlooking || undefined,
         }),
       });
       const result = (await response.json()) as { predicted_price_inr?: number; detail?: string };
-      if (!response.ok || typeof result.predicted_price_inr !== "number") throw new Error(result.detail ?? "Invalid prediction response");
-      updateUnit((current) => ({ ...current, prediction: { status: "success", price: result.predicted_price_inr! } }));
-      setNotice("Real model prediction received");
+      if (!response.ok || typeof result.predicted_price_inr !== "number") {
+        throw new Error(result.detail ?? "The prediction service returned an invalid response.");
+      }
+      setProject((current) => ({
+        ...current,
+        prediction: { status: "success", price: result.predicted_price_inr! },
+      }));
+      setApiHealth("online");
     } catch (error) {
-      updateUnit((current) => ({ ...current, prediction: { status: "error", message: error instanceof Error ? error.message : "Prediction request failed" } }));
-      setNotice("Prediction request failed");
+      setProject((current) => ({
+        ...current,
+        prediction: {
+          status: "error",
+          message: error instanceof Error ? error.message : "Prediction request failed.",
+        },
+      }));
+      setApiHealth("offline");
     }
   };
 
@@ -329,134 +586,343 @@ function App() {
     if (tool === "select") return;
     if (tool === "room") {
       const nextIndex = rooms.filter((room) => room.id.startsWith("custom-room")).length + 1;
-      const newRoom: PlanRoom = { id: `custom-room-${Date.now()}`, label: `Flex room ${nextIndex}`, detail: "10 m²", x: 220 + nextIndex * 9, y: 260 + nextIndex * 8, width: 125, height: 92, hasDoor: true };
+      const newRoom: PlanRoom = {
+        id: `custom-room-${Date.now()}`,
+        label: `Flex room ${nextIndex}`,
+        detail: "10 m²",
+        x: 220 + nextIndex * 9,
+        y: 260 + nextIndex * 8,
+        width: 125,
+        height: 92,
+        hasDoor: true,
+      };
       updateRooms([...rooms, newRoom]);
       setSelectedRoom(newRoom.id);
-      setNotice(`${newRoom.label} added; drag it into position`);
+      setActiveTool("select");
       return;
     }
-    const current = rooms.find((room) => room.id === selectedRoom);
-    if (!current) {
-      setNotice("Select a room first");
+
+    const currentRoom = rooms.find((room) => room.id === selectedRoom);
+    if (!currentRoom) {
+      setActiveTool("select");
       return;
     }
     if (tool === "delete") {
-      updateRooms(rooms.filter((room) => room.id !== selectedRoom));
-      setSelectedRoom(rooms.find((room) => room.id !== selectedRoom)?.id ?? "");
-      setNotice(`${current.label} removed`);
+      const nextRooms = rooms.filter((room) => room.id !== selectedRoom);
+      updateRooms(nextRooms);
+      setSelectedRoom(nextRooms[0]?.id ?? "");
     } else if (tool === "door") {
-      updateRooms(rooms.map((room) => room.id === selectedRoom ? { ...room, hasDoor: !room.hasDoor } : room));
-      setNotice(`Door ${current.hasDoor ? "removed from" : "added to"} ${current.label}`);
+      updateRooms(rooms.map((room) => (room.id === selectedRoom ? { ...room, hasDoor: !room.hasDoor } : room)));
     } else if (tool === "plant") {
-      updateRooms(rooms.map((room) => room.id === selectedRoom ? { ...room, hasPlant: !room.hasPlant } : room));
-      setNotice(`Plant ${current.hasPlant ? "removed from" : "added to"} ${current.label}`);
+      updateRooms(rooms.map((room) => (room.id === selectedRoom ? { ...room, hasPlant: !room.hasPlant } : room)));
     } else if (tool === "label") {
-      const label = current.label.startsWith("Custom") ? "Flex space" : `Custom ${current.label}`;
-      updateRooms(rooms.map((room) => room.id === selectedRoom ? { ...room, label } : room));
-      setNotice(`${current.label} label updated`);
+      const nextLabel = currentRoom.label.startsWith("Custom") ? "Flex space" : `Custom ${currentRoom.label}`;
+      updateRooms(rooms.map((room) => (room.id === selectedRoom ? { ...room, label: nextLabel } : room)));
     }
     setActiveTool("select");
   };
 
-  const addUnit = () => {
-    const id = Math.max(0, ...units.map((candidate) => candidate.id)) + 1;
-    const next: Unit = { id, name: `Unit ${id}`, form: { ...initialForm, title: `New property ${id}` }, rooms: buildPlan(2, 1200), prediction: { status: "idle" } };
-    setUnits((current) => [...current, next]);
-    setActiveUnitId(id);
-    setSection("plans");
-    setNotice(`${next.name} created`);
-  };
-
-  const removeUnit = (id: number) => {
-    if (units.length === 1) {
-      setNotice("A project must keep at least one unit");
-      return;
-    }
-    const next = units.filter((candidate) => candidate.id !== id);
-    setUnits(next);
-    if (activeUnitId === id) setActiveUnitId(next[0].id);
-    setNotice(`Unit ${id} removed`);
-  };
-
-  const saveProject = () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(units));
-    setNotice("Project saved in this browser");
-  };
-
-  const exportProject = () => {
-    const blob = new Blob([JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), units }, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "spacemap-project.json";
-    link.click();
-    URL.revokeObjectURL(url);
-    setNotice("Project JSON exported");
-  };
-
-  const checkApi = async () => {
-    if (!API_URL) {
-      setApiHealth("offline");
-      setNotice("No API URL configured");
-      return;
-    }
-    setApiHealth("checking");
-    try {
-      const response = await fetch(`${API_URL}/health`);
-      setApiHealth(response.ok ? "online" : "offline");
-      setNotice(response.ok ? "Model API is online" : "Model API health check failed");
-    } catch {
-      setApiHealth("offline");
-      setNotice("Model API is unreachable");
-    }
-  };
-
-  const openSection = (next: Section) => {
-    setSection(next);
-    if (next === "home" || next === "plans") setCanvasMode("2d");
-  };
-
   const centerPanel = useMemo(() => {
-    if (section === "units") {
-      return <div className="functional-panel"><div className="functional-heading"><div><h2>Property units</h2><p>Every card is backed by editable project state.</p></div><Button onClick={addUnit}><Plus /> Add unit</Button></div><div className="unit-grid">{units.map((candidate) => <button key={candidate.id} className={`unit-grid-card ${candidate.id === activeUnitId ? "active" : ""}`} onClick={() => { setActiveUnitId(candidate.id); setSection("plans"); }}><MiniPlan rooms={candidate.rooms} /><span><strong>{candidate.name}</strong><small>{candidate.form.areaSqft} sq ft · {candidate.form.bedrooms} bedrooms</small></span>{candidate.prediction.status === "success" && <em>{formatCurrency(candidate.prediction.price)}</em>}</button>)}</div></div>;
+    if (section === "upload") {
+      return (
+        <div className="upload-preview-panel">
+          <div className="canvas-header">
+            <div>
+              <h2>AI property valuation</h2>
+              <p>Preview the real CAD or floor-plan image before analysis.</p>
+            </div>
+            {uploadedPlan && <span className="file-type-badge">{uploadedPlan.type === "application/pdf" ? "PDF" : "IMAGE"}</span>}
+          </div>
+          <div className={`plan-preview ${uploadedPlan ? "has-file" : ""}`}>
+            {uploadedPlan ? (
+              uploadedPlan.type === "application/pdf" ? (
+                <iframe title={uploadedPlan.name} src={uploadedPlan.url} />
+              ) : (
+                <img src={uploadedPlan.url} alt={`Uploaded property plan ${uploadedPlan.name}`} />
+              )
+            ) : (
+              <div className="empty-preview">
+                <FileImage />
+                <strong>Your property plan will appear here</strong>
+                <span>Upload a clear top-down CAD, blueprint or floor-plan image.</span>
+              </div>
+            )}
+          </div>
+          {uploadedPlan && (
+            <div className="uploaded-file-bar">
+              <FileImage />
+              <div><strong>{uploadedPlan.name}</strong><span>{(uploadedPlan.size / 1024 / 1024).toFixed(2)} MB · Ready for analysis</span></div>
+              <Button variant="ghost" size="icon" onClick={removeUploadedPlan} aria-label="Remove uploaded plan"><Trash2 /></Button>
+            </div>
+          )}
+        </div>
+      );
     }
-    if (section === "insights") {
-      return <div className="functional-panel"><div className="functional-heading"><div><h2>Live project insights</h2><p>Calculated from your current units; no sample analytics.</p></div></div><div className="insight-grid"><article><span>Total units</span><strong>{units.length}</strong></article><article><span>Combined area</span><strong>{units.reduce((sum, candidate) => sum + (Number(candidate.form.areaSqft) || 0), 0).toLocaleString("en-IN")} sq ft</strong></article><article><span>Total rooms</span><strong>{units.reduce((sum, candidate) => sum + candidate.rooms.length, 0)}</strong></article><article><span>Real predictions</span><strong>{units.filter((candidate) => candidate.prediction.status === "success").length}</strong></article></div><div className="insight-list">{units.map((candidate) => <div key={candidate.id}><span>{candidate.name}</span><b>{candidate.form.location || "No location"}</b><em>{candidate.prediction.status === "success" ? formatCurrency(candidate.prediction.price) : "Not predicted"}</em></div>)}</div></div>;
-    }
+
     if (section === "settings") {
-      return <div className="functional-panel"><div className="functional-heading"><div><h2>Workspace settings</h2><p>Connection and local project controls.</p></div></div><div className="settings-stack"><article><div className="api-state">{apiHealth === "online" ? <Wifi /> : <WifiOff />}<div><strong>Prediction API</strong><span>{API_URL || "Not configured"}</span></div></div><Button variant="outline" onClick={checkApi}>{apiHealth === "checking" ? "Checking…" : "Check connection"}</Button></article><article><div><strong>Browser project storage</strong><span>Save keeps the editable project on this device.</span></div><Button variant="outline" onClick={saveProject}>Save now</Button></article><article><div><strong>Portable project file</strong><span>Export all forms, plans and real predictions as JSON.</span></div><Button variant="outline" onClick={exportProject}>Export JSON</Button></article></div></div>;
+      return (
+        <div className="settings-panel">
+          <div className="functional-heading">
+            <div>
+              <h2>Connection settings</h2>
+              <p>The workspace saves automatically in this browser.</p>
+            </div>
+          </div>
+          <div className="settings-stack">
+            <article>
+              <div className="api-state">
+                {apiHealth === "online" ? <Wifi /> : <WifiOff />}
+                <div>
+                  <strong>Prediction API</strong>
+                  <span>{API_URL || "Not configured in VITE_PREDICTION_API_URL"}</span>
+                </div>
+              </div>
+              <span className={`connection-badge ${apiHealth}`}>{apiHealth}</span>
+            </article>
+            <article>
+              <div>
+                <strong>Automatic browser save</strong>
+                <span>Property fields, rooms and the latest prediction persist on this device.</span>
+              </div>
+              <span className="connection-badge online">active</span>
+            </article>
+          </div>
+        </div>
+      );
     }
-    return <><div className="canvas-header"><div><h2>Visual floor plan</h2><p>{areaM2 || "—"} m² <span>•</span> Floor {form.floorNumber || "—"} <span>•</span> {rooms.length} spaces</p></div><div className="canvas-modes"><Button className={canvasMode === "2d" ? "dark-button compact" : "soft-button compact"} onClick={() => setCanvasMode("2d")}>2D plan</Button><Button className={canvasMode === "3d" ? "dark-button compact" : "soft-button compact"} onClick={() => setCanvasMode("3d")}>3D view</Button><Button variant="outline" size="icon" className="soft-button icon-button" onClick={() => document.documentElement.requestFullscreen?.()} aria-label="Fullscreen"><Expand /></Button></div></div><FloorPlan rooms={rooms} updateRooms={updateRooms} selectedRoom={selectedRoom} setSelectedRoom={setSelectedRoom} mode={canvasMode} zoom={zoom} /><div className="canvas-toolbar"><ToolButton label="Select and move" active={activeTool === "select"} onClick={() => applyTool("select")}><MousePointer2 /></ToolButton><ToolButton label="Toggle door on selected room" onClick={() => applyTool("door")}><DoorOpen /></ToolButton><ToolButton label="Add a room" onClick={() => applyTool("room")}><LayoutGrid /></ToolButton><ToolButton label="Rename selected room" onClick={() => applyTool("label")}><Type /></ToolButton><ToolButton label="Toggle plant" onClick={() => applyTool("plant")}><TreePine /></ToolButton><Separator orientation="vertical" className="toolbar-divider" /><ToolButton label="Delete selected room" destructive onClick={() => applyTool("delete")}><Trash2 /></ToolButton></div><div className="zoom-controls"><Button variant="ghost" size="icon-xs" onClick={() => setZoom((value) => Math.max(.65, value - .1))}><ZoomOut /></Button><span>{Math.round(zoom * 100)}%</span><Button variant="ghost" size="icon-xs" onClick={() => setZoom((value) => Math.min(1.35, value + .1))}><ZoomIn /></Button></div></>;
-  }, [section, units, activeUnitId, areaM2, form, rooms, selectedRoom, canvasMode, zoom, activeTool, apiHealth]);
+
+    return (
+      <>
+        <div className="canvas-header">
+          <div>
+            <h2>Visual floor plan</h2>
+            <p>
+              {areaM2 || "—"} m² <span>•</span> Floor {form.floorNumber || "—"} <span>•</span> {rooms.length} spaces
+            </p>
+          </div>
+          <div className="canvas-modes">
+            <Button className={canvasMode === "2d" ? "dark-button compact" : "soft-button compact"} onClick={() => setCanvasMode("2d")}>2D plan</Button>
+            <Button className={canvasMode === "3d" ? "dark-button compact" : "soft-button compact"} onClick={() => setCanvasMode("3d")}>3D view</Button>
+            <Button variant="outline" size="icon" className="soft-button icon-button" onClick={() => document.documentElement.requestFullscreen?.()} aria-label="Fullscreen"><Expand /></Button>
+          </div>
+        </div>
+        <FloorPlan
+          rooms={rooms}
+          updateRooms={updateRooms}
+          selectedRoom={selectedRoom}
+          setSelectedRoom={setSelectedRoom}
+          mode={canvasMode}
+          zoom={zoom}
+        />
+        <div className="canvas-toolbar">
+          <ToolButton label="Select and move" active={activeTool === "select"} onClick={() => applyTool("select")}><MousePointer2 /></ToolButton>
+          <ToolButton label="Toggle door" onClick={() => applyTool("door")}><DoorOpen /></ToolButton>
+          <ToolButton label="Add room" onClick={() => applyTool("room")}><Layers3 /></ToolButton>
+          <ToolButton label="Rename room" onClick={() => applyTool("label")}><Type /></ToolButton>
+          <ToolButton label="Toggle plant" onClick={() => applyTool("plant")}><TreePine /></ToolButton>
+          <Separator orientation="vertical" className="toolbar-divider" />
+          <ToolButton label="Delete room" destructive onClick={() => applyTool("delete")}><Trash2 /></ToolButton>
+        </div>
+        <div className="zoom-controls">
+          <Button variant="ghost" size="icon-xs" onClick={() => setZoom((value) => Math.max(0.65, value - 0.1))}><ZoomOut /></Button>
+          <span>{Math.round(zoom * 100)}%</span>
+          <Button variant="ghost" size="icon-xs" onClick={() => setZoom((value) => Math.min(1.35, value + 0.1))}><ZoomIn /></Button>
+        </div>
+      </>
+    );
+  }, [section, uploadedPlan, apiHealth, areaM2, form.floorNumber, rooms, canvasMode, selectedRoom, zoom, activeTool]);
 
   return (
     <main className="app-shell">
       <Card className="topbar card">
-        <div className="brand"><Box /><span>SpaceMap</span><em>AI</em></div>
-        <div className="view-switch" aria-label="Workspace view"><Button variant="ghost" className={section === "units" ? "active" : ""} onClick={() => openSection("units")}><List /> List view</Button><Button variant="ghost" className={section !== "units" ? "active" : ""} onClick={() => openSection("plans")}><LayoutGrid /> Visual view</Button></div>
-        <div className="header-actions"><span className="save-status"><CheckCircle2 /> {notice}</span><Button variant="outline" className="soft-button" onClick={saveProject}><Save /> Save</Button><Button className="dark-button" onClick={exportProject}><Download /> Export</Button></div>
+        <div className="brand">
+          <img src="/favicon.svg" alt="" />
+          <span>SpaceMap</span>
+        </div>
       </Card>
 
       <div className="workspace">
         <nav className="rail card" aria-label="Primary navigation">
-          {[{ id: "home", label: "Home", icon: Home }, { id: "units", label: "Units", icon: LayoutGrid }, { id: "plans", label: "Plans", icon: Layers3 }, { id: "insights", label: "Insights", icon: BarChart3 }].map(({ id, label, icon: Icon }) => <Tooltip key={id}><TooltipTrigger render={<Button variant="ghost" size="icon" className={`rail-item ${section === id ? "active" : ""}`} onClick={() => openSection(id as Section)} aria-label={label} />}><Icon /></TooltipTrigger><TooltipContent side="right">{label}</TooltipContent></Tooltip>)}
-          <Tooltip><TooltipTrigger render={<Button variant="ghost" size="icon" className={`rail-item push-bottom ${section === "settings" ? "active" : ""}`} onClick={() => openSection("settings")} aria-label="Settings" />}><Settings /></TooltipTrigger><TooltipContent side="right">Settings</TooltipContent></Tooltip>
+          <Tooltip>
+            <TooltipTrigger render={<Button variant="ghost" size="icon" className={`rail-item ${section === "plan" ? "active" : ""}`} onClick={() => setSection("plan")} aria-label="Floor plan" />}>
+              <Layers3 />
+            </TooltipTrigger>
+            <TooltipContent side="right">Floor plan</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger render={<Button variant="ghost" size="icon" className={`rail-item ${section === "upload" ? "active" : ""}`} onClick={() => setSection("upload")} aria-label="Upload property plan" />}>
+              <Upload />
+            </TooltipTrigger>
+            <TooltipContent side="right">Upload property plan</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger render={<Button variant="ghost" size="icon" className={`rail-item push-bottom ${section === "settings" ? "active" : ""}`} onClick={() => setSection("settings")} aria-label="Settings" />}>
+              <Settings />
+            </TooltipTrigger>
+            <TooltipContent side="right">Settings</TooltipContent>
+          </Tooltip>
         </nav>
 
-        <Card className="details-panel card">
-          <div className="panel-heading"><h1>Property details</h1><p>Inputs used by the floor plan and real model request.</p></div>
-          <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "basic" | "more")}><TabsList variant="line" className="tabs"><TabsTrigger value="basic">Basic info</TabsTrigger><TabsTrigger value="more">More details</TabsTrigger></TabsList></Tabs>
-          {activeTab === "basic" ? <div className="form-stack"><Field label="Title"><Input value={form.title} onChange={(event) => updateForm("title", event.target.value)} /></Field><Field label="Description"><Textarea value={form.description} onChange={(event) => updateForm("description", event.target.value)} /></Field><div className="field-grid"><Field label="Area (sq ft)"><Input type="number" min="100" value={form.areaSqft} onChange={(event) => updateForm("areaSqft", event.target.value)} /></Field><Field label="Bedrooms"><Input type="number" min="1" max="4" value={form.bedrooms} onChange={(event) => updateForm("bedrooms", event.target.value)} /></Field></div><Field label="Location"><span className="input-with-icon"><Input value={form.location} onChange={(event) => updateForm("location", event.target.value)} /><MapPin /></span></Field><div className="field-grid"><Field label="Bathrooms"><Input type="number" min="0" max="20" value={form.bathrooms} onChange={(event) => updateForm("bathrooms", event.target.value)} /></Field><Field label="Furnishing"><Select value={form.furnishing} onValueChange={(value) => updateForm("furnishing", value as PropertyForm["furnishing"])}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="unfurnished">Unfurnished</SelectItem><SelectItem value="semi_furnished">Semi furnished</SelectItem><SelectItem value="furnished">Furnished</SelectItem><SelectItem value="unknown">Unknown</SelectItem></SelectContent></Select></Field></div></div> : <div className="form-stack"><Field label="Locality"><Input value={form.locality} onChange={(event) => updateForm("locality", event.target.value)} /></Field><Field label="Society"><Input value={form.society} onChange={(event) => updateForm("society", event.target.value)} /></Field><div className="field-grid"><Field label="Current floor"><Input type="number" min="-2" value={form.floorNumber} onChange={(event) => updateForm("floorNumber", event.target.value)} /></Field><Field label="Total floors"><Input type="number" min="1" value={form.totalFloors} onChange={(event) => updateForm("totalFloors", event.target.value)} /></Field></div><div className="help-card"><Sparkles /><p>Price and price-per-square-foot are never inputs. Prediction stays empty until the real API answers.</p></div></div>}
-          <div className="panel-cta"><Button variant="outline" className="outline-button" onClick={generatePlan}>Generate floor plan</Button><Button className="dark-button wide" onClick={predict} disabled={prediction.status === "loading"}>{prediction.status === "loading" ? "Predicting…" : "Generate & predict"}</Button></div>
+        <Card className={`details-panel card ${section === "upload" ? "upload-sidebar" : ""}`}>
+          {section === "upload" ? (
+            <>
+              <div className="panel-heading">
+                <div><span className="eyebrow">Image valuation</span><h1>Upload property plan</h1></div>
+              </div>
+              <input ref={fileInputRef} className="file-input" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" onChange={(event) => { const file = event.target.files?.[0]; if (file) acceptPlanFile(file); }} />
+              <button
+                type="button"
+                className={`upload-dropzone ${draggingPlan ? "dragging" : ""}`}
+                onClick={() => fileInputRef.current?.click()}
+                onDragEnter={(event) => { event.preventDefault(); setDraggingPlan(true); }}
+                onDragOver={(event) => event.preventDefault()}
+                onDragLeave={() => setDraggingPlan(false)}
+                onDrop={(event) => { event.preventDefault(); setDraggingPlan(false); const file = event.dataTransfer.files?.[0]; if (file) acceptPlanFile(file); }}
+              >
+                <span className="upload-icon"><Upload /></span>
+                <strong>{uploadedPlan ? "Replace this plan" : "Drop your CAD here"}</strong>
+                <span>or click to browse files</span>
+                <em>PNG, JPG, WEBP or PDF · max 20 MB</em>
+              </button>
+              <div className="upload-tips">
+                <strong>For the clearest analysis</strong>
+                <span>✓ Use a straight top-down floor plan</span>
+                <span>✓ Keep dimensions and room labels visible</span>
+                <span>✓ Avoid blurry photos, glare and shadows</span>
+              </div>
+              <p className="privacy-note">Uploads remain in your browser until an image-analysis API is configured.</p>
+            </>
+          ) : (
+            <>
+              <div className="panel-heading">
+                <div><span className="eyebrow">Prediction inputs</span><h1>Property details</h1></div>
+                <span className="auto-badge"><Sparkles /> Auto plan</span>
+              </div>
+              <div className="details-form">
+            <Field label="Area (sq ft)"><Input type="number" min="100" max="25000" value={form.areaSqft} onChange={(event) => updateForm("areaSqft", event.target.value)} /></Field>
+            <Field label="Area type"><Select value={form.areaType} onValueChange={(value) => updateForm("areaType", value as PropertyForm["areaType"])}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="super">Super area</SelectItem><SelectItem value="carpet">Carpet area</SelectItem></SelectContent></Select></Field>
+            <Field label="Location"><span className="input-with-icon"><Input value={form.location} onChange={(event) => updateForm("location", event.target.value)} /><button type="button" onClick={() => setMapOpen(true)} aria-label="Open location on map"><MapPin /></button></span></Field>
+            <Field label="Locality"><Input value={form.locality} onChange={(event) => updateForm("locality", event.target.value)} /></Field>
+            <Field label="Society" wide><Input value={form.society} onChange={(event) => updateForm("society", event.target.value)} /></Field>
+            <Field label="Bedrooms"><Input type="number" min="0" max="20" value={form.bedrooms} onChange={(event) => updateForm("bedrooms", event.target.value)} /></Field>
+            <Field label="Bathrooms"><Input type="number" min="0" max="20" value={form.bathrooms} onChange={(event) => updateForm("bathrooms", event.target.value)} /></Field>
+            <Field label="Balconies"><Input type="number" min="0" max="20" value={form.balcony} onChange={(event) => updateForm("balcony", event.target.value)} /></Field>
+            <Field label="Parking spaces"><Input type="number" min="0" max="20" value={form.carParking} onChange={(event) => updateForm("carParking", event.target.value)} /></Field>
+            <Field label="Current floor"><Input type="number" min="-2" max="250" value={form.floorNumber} onChange={(event) => updateForm("floorNumber", event.target.value)} /></Field>
+            <Field label="Total floors"><Input type="number" min="1" max="250" value={form.totalFloors} onChange={(event) => updateForm("totalFloors", event.target.value)} /></Field>
+            <Field label="Property type"><Select value={form.propertyType} onValueChange={(value) => updateForm("propertyType", value as PropertyForm["propertyType"])}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{["flat", "villa", "house", "builder_floor", "penthouse", "studio", "plot", "unknown"].map((value) => <SelectItem key={value} value={value}>{readable(value)}</SelectItem>)}</SelectContent></Select></Field>
+            <Field label="Furnishing"><Select value={form.furnishing} onValueChange={(value) => updateForm("furnishing", value as PropertyForm["furnishing"])}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{["unfurnished", "semi_furnished", "furnished", "unknown"].map((value) => <SelectItem key={value} value={value}>{readable(value)}</SelectItem>)}</SelectContent></Select></Field>
+            <Field label="Transaction"><Select value={form.transaction} onValueChange={(value) => updateForm("transaction", value as PropertyForm["transaction"])}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{["resale", "new_property", "other", "unknown"].map((value) => <SelectItem key={value} value={value}>{readable(value)}</SelectItem>)}</SelectContent></Select></Field>
+            <Field label="Ownership"><Select value={form.ownership} onValueChange={(value) => updateForm("ownership", value as PropertyForm["ownership"])}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{["freehold", "cooperative_society", "leasehold", "unknown"].map((value) => <SelectItem key={value} value={value}>{readable(value)}</SelectItem>)}</SelectContent></Select></Field>
+            <Field label="Facing"><Input value={form.facing} onChange={(event) => updateForm("facing", event.target.value)} /></Field>
+            <Field label="Overlooking"><Input value={form.overlooking} onChange={(event) => updateForm("overlooking", event.target.value)} /></Field>
+              </div>
+              <p className="auto-note">Area, bedrooms and bathrooms refresh the plan automatically.</p>
+            </>
+          )}
         </Card>
 
         <Card className="canvas-panel card">{centerPanel}</Card>
 
         <aside className="summary-column">
-          <Card className="summary-card card"><h2>Property summary</h2><dl><div><dt>Super area</dt><dd>{areaSqft || "—"} sq ft</dd></div><div><dt>Bedrooms</dt><dd>{form.bedrooms || "—"}</dd></div><div><dt>Location</dt><dd>{form.location || "—"}</dd></div><div><dt>Furnishing</dt><dd>{form.furnishing.replace("_", " ")}</dd></div><div><dt>Prediction</dt><dd className={prediction.status === "success" ? "price-result" : ""}>{prediction.status === "success" ? formatCurrency(prediction.price) : prediction.status === "loading" ? "Calculating…" : "Not predicted"}</dd></div>{pricePerSqft && <div><dt>Predicted / sq ft</dt><dd>{formatCurrency(pricePerSqft)}</dd></div>}</dl>{prediction.status === "error" && <p className="api-note">{prediction.message}</p>}<Button variant="outline" className="outline-button full" onClick={() => setActiveTab("more")}>Edit all details</Button></Card>
-          <Card className="units-card card"><div className="units-title"><div><h2>Project units</h2><p>{units.length} editable {units.length === 1 ? "unit" : "units"}</p></div><Button size="icon-sm" onClick={addUnit}><Plus /></Button></div><div className="unit-list">{units.map((candidate) => <article className={candidate.id === activeUnitId ? "unit active" : "unit"} key={candidate.id} onClick={() => setActiveUnitId(candidate.id)}><MiniPlan rooms={candidate.rooms} /><div><strong>{candidate.name}</strong><span>{candidate.form.areaSqft} sq ft</span></div><Button variant="ghost" size="icon-xs" aria-label={`Remove ${candidate.name}`} onClick={(event) => { event.stopPropagation(); removeUnit(candidate.id); }}>×</Button></article>)}</div><Button variant="outline" className="add-unit" onClick={addUnit}><Plus /> Add new unit</Button></Card>
+          {section === "upload" ? (
+            <>
+              <Card className="summary-card card upload-summary">
+                <span className="eyebrow">Upload summary</span>
+                <h2>Plan details</h2>
+                <dl>
+                  <div><dt>File</dt><dd>{uploadedPlan?.name ?? "No file"}</dd></div>
+                  <div><dt>Format</dt><dd>{uploadedPlan ? uploadedPlan.type.split("/").pop()?.toUpperCase() : "—"}</dd></div>
+                  <div><dt>Size</dt><dd>{uploadedPlan ? `${(uploadedPlan.size / 1024 / 1024).toFixed(2)} MB` : "—"}</dd></div>
+                  <div><dt>Location</dt><dd>{form.location || "—"}</dd></div>
+                </dl>
+              </Card>
+              <Card className={`prediction-card upload-analysis-card card ${uploadAnalysis.status}`}>
+                <div className="prediction-heading">
+                  <div><span className="eyebrow">Vision valuation</span><h2>Plan analysis</h2></div>
+                  <FileImage />
+                </div>
+                <div className="prediction-value">
+                  {uploadAnalysis.status === "success" ? (
+                    <><strong>{formatCurrency(uploadAnalysis.price)}</strong><span>Returned by the configured image-analysis API.</span></>
+                  ) : uploadAnalysis.status === "loading" ? (
+                    <><strong>Analyzing…</strong><span>Reading the uploaded plan and property context.</span></>
+                  ) : (
+                    <strong className="prediction-placeholder" aria-label="No image valuation yet">—</strong>
+                  )}
+                </div>
+                {uploadAnalysis.status === "error" && <p className="prediction-error">{uploadAnalysis.message}</p>}
+                <div className="analysis-checks"><span>Room geometry</span><span>Visible dimensions</span><span>Property context</span></div>
+                <Button className="dark-button predict-button" onClick={analyzeUploadedPlan} disabled={!uploadedPlan || uploadAnalysis.status === "loading"}>
+                  <Sparkles /> {uploadAnalysis.status === "loading" ? "Analyzing plan…" : "Analyze uploaded plan"}
+                </Button>
+                <p className="honesty-note">No sample valuation is shown. Results require a real image-analysis endpoint.</p>
+              </Card>
+            </>
+          ) : (
+            <>
+          <Card className="summary-card card">
+            <span className="eyebrow">Live summary</span>
+            <h2>Property snapshot</h2>
+            <dl>
+              <div><dt>Area</dt><dd>{areaSqft ? `${areaSqft.toLocaleString("en-IN")} sq ft` : "—"}</dd></div>
+              <div><dt>Configuration</dt><dd>{form.bedrooms || "—"} bed · {form.bathrooms || "—"} bath</dd></div>
+              <div><dt>Property</dt><dd>{readable(form.propertyType)}</dd></div>
+              <div><dt>Location</dt><dd>{form.location || "—"}</dd></div>
+              <div><dt>Floor</dt><dd>{form.floorNumber || "—"} / {form.totalFloors || "—"}</dd></div>
+            </dl>
+          </Card>
+
+          <Card className={`prediction-card card ${prediction.status}`}>
+            <div className="prediction-heading">
+              <div>
+                <span className="eyebrow">AI price prediction</span>
+                <h2>Estimated value</h2>
+              </div>
+              <Box />
+            </div>
+            <div className="prediction-value">
+              {prediction.status === "success" ? (
+                <>
+                  <strong>{formatCurrency(prediction.price)}</strong>
+                  {pricePerSqft && <span>{formatCurrency(pricePerSqft)} per sq ft</span>}
+                </>
+              ) : prediction.status === "loading" ? (
+                <><strong>Calculating…</strong><span>Running the real 90.64% R² model</span></>
+              ) : (
+                <strong className="prediction-placeholder" aria-label="No prediction yet">—</strong>
+              )}
+            </div>
+            {prediction.status === "error" && <p className="prediction-error">{prediction.message}</p>}
+            <div className="model-score"><span>Validated model score</span><strong>90.64% R²</strong></div>
+            <Button className="dark-button predict-button" onClick={predict} disabled={prediction.status === "loading"}>
+              <Sparkles /> {prediction.status === "loading" ? "Predicting price…" : "Predict price"}
+            </Button>
+            <p className="honesty-note">No fallback estimate. A value appears only when the real API responds.</p>
+          </Card>
+            </>
+          )}
         </aside>
       </div>
+
+      {mapOpen && (
+        <div className="map-overlay" role="presentation" onMouseDown={() => setMapOpen(false)}>
+          <section className="map-dialog card" role="dialog" aria-modal="true" aria-labelledby="map-title" onMouseDown={(event) => event.stopPropagation()}>
+            <header>
+              <div>
+                <span className="eyebrow">Real map preview</span>
+                <h2 id="map-title">{mapQuery}</h2>
+              </div>
+              <Button variant="ghost" size="icon" onClick={() => setMapOpen(false)} aria-label="Close map"><X /></Button>
+            </header>
+            <iframe title={`Map of ${mapQuery}`} src={mapEmbedUrl} loading="lazy" referrerPolicy="no-referrer-when-downgrade" />
+            <footer>
+              <p><MapPinned /> Map follows the location and locality fields.</p>
+              <Button variant="outline" onClick={() => window.open(mapPageUrl, "_blank", "noopener,noreferrer")}><ExternalLink /> Open in Google Maps</Button>
+            </footer>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
