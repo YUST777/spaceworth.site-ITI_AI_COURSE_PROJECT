@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import os
+import time
+from collections import defaultdict, deque
 from pathlib import Path
+from threading import Lock
 from typing import Literal
 
 import joblib
 import numpy as np
 import pandas as pd
 import torch
-from fastapi import Depends, FastAPI, HTTPException, Security
+from fastapi import Depends, FastAPI, HTTPException, Request, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field, field_validator
@@ -18,7 +21,11 @@ from torch import nn
 MODEL_PATH = Path(os.getenv("MODEL_PATH", "/app/models/house_price.pkl"))
 API_KEY = os.getenv("API_KEY", "")
 ALLOWED_ORIGINS = [origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "*").split(",") if origin.strip()]
+RATE_LIMIT_REQUESTS = max(1, int(os.getenv("RATE_LIMIT_REQUESTS", "30")))
+RATE_LIMIT_WINDOW_SECONDS = max(1, int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60")))
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+request_windows: defaultdict[str, deque[float]] = defaultdict(deque)
+rate_limit_lock = Lock()
 
 
 class EntityEmbeddingRegressor(nn.Module):
@@ -90,6 +97,25 @@ def locality_tail(locality: str, token_count: int) -> str:
 def verify_api_key(api_key: str | None = Security(api_key_header)) -> None:
     if API_KEY and api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Missing or invalid API key")
+
+
+def enforce_rate_limit(request: Request) -> None:
+    forwarded_for = request.headers.get("x-forwarded-for", "")
+    client_key = forwarded_for.split(",")[0].strip() or (request.client.host if request.client else "unknown")
+    now = time.monotonic()
+    cutoff = now - RATE_LIMIT_WINDOW_SECONDS
+    with rate_limit_lock:
+        timestamps = request_windows[client_key]
+        while timestamps and timestamps[0] <= cutoff:
+            timestamps.popleft()
+        if len(timestamps) >= RATE_LIMIT_REQUESTS:
+            retry_after = max(1, int(RATE_LIMIT_WINDOW_SECONDS - (now - timestamps[0])))
+            raise HTTPException(
+                status_code=429,
+                detail="Prediction rate limit reached. Try again shortly.",
+                headers={"Retry-After": str(retry_after)},
+            )
+        timestamps.append(now)
 
 
 class HousePriceService:
@@ -233,6 +259,6 @@ def health() -> dict[str, object]:
     }
 
 
-@app.post("/predict", dependencies=[Depends(verify_api_key)])
+@app.post("/predict", dependencies=[Depends(verify_api_key), Depends(enforce_rate_limit)])
 def predict(request: PropertyInput) -> dict[str, float]:
     return {"predicted_price_inr": round(service.predict(request), 2)}

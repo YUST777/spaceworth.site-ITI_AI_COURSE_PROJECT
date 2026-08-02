@@ -6,16 +6,22 @@ import {
   ExternalLink,
   Expand,
   FileImage,
+  Grid2X2,
   Layers3,
+  Magnet,
   MapPin,
   MapPinned,
   MousePointer2,
+  Redo2,
+  RotateCcw,
+  Ruler,
   Settings,
   Sparkles,
   Trash2,
   TreePine,
   Type,
   Upload,
+  Undo2,
   Wifi,
   WifiOff,
   X,
@@ -105,6 +111,19 @@ const API_URL = (
 ).replace(/\/$/, "");
 const PLAN_API_URL = (import.meta.env.VITE_PLAN_ANALYSIS_API_URL ?? "").replace(/\/$/, "");
 const STORAGE_KEY = "spacemap-project-v2";
+const PREDICTION_COOLDOWN_MS = 1800;
+
+const NUMERIC_LIMITS = {
+  areaSqft: { min: 100, max: 25000, fallback: 1200 },
+  bedrooms: { min: 1, max: 4, fallback: 2 },
+  bathrooms: { min: 1, max: 3, fallback: 2 },
+  balcony: { min: 0, max: 4, fallback: 1 },
+  carParking: { min: 0, max: 4, fallback: 1 },
+  floorNumber: { min: -2, max: 250, fallback: 8 },
+  totalFloors: { min: 1, max: 250, fallback: 24 },
+} as const;
+
+type NumericFormKey = keyof typeof NUMERIC_LIMITS;
 
 const initialForm: PropertyForm = {
   areaSqft: "1200",
@@ -140,6 +159,25 @@ const readable = (value: string) =>
     .join(" ");
 
 const optionalNumber = (value: string) => (value.trim() === "" ? undefined : Number(value));
+
+function normalizeNumericField(key: NumericFormKey, value: string) {
+  const limits = NUMERIC_LIMITS[key];
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return String(limits.fallback);
+  return String(Math.min(limits.max, Math.max(limits.min, Math.round(parsed))));
+}
+
+function normalizeForm(form: PropertyForm): PropertyForm {
+  const next = { ...form };
+  (Object.keys(NUMERIC_LIMITS) as NumericFormKey[]).forEach((key) => {
+    next[key] = normalizeNumericField(key, next[key]);
+  });
+  const floor = Number(next.floorNumber);
+  const totalFloors = Number(next.totalFloors);
+  next.floorNumber = String(Math.min(Math.max(-2, floor), totalFloors));
+  if (!next.location.trim()) next.location = initialForm.location;
+  return next;
+}
 
 function buildPlan(bedrooms: number, bathrooms: number, areaSqft: number): PlanRoom[] {
   const bedroomCount = Math.min(4, Math.max(1, Math.round(bedrooms || 2)));
@@ -182,7 +220,7 @@ function loadProject(): ProjectState {
     const project = Array.isArray(parsed) ? parsed[0] : parsed;
     if (!project) return fallback;
     return {
-      form: { ...initialForm, ...project.form },
+      form: normalizeForm({ ...initialForm, ...project.form }),
       rooms: Array.isArray(project.rooms) && project.rooms.length ? project.rooms : fallback.rooms,
       prediction: project.prediction ?? { status: "idle" },
     };
@@ -217,6 +255,32 @@ function Field({ label, children, wide = false }: { label: string; children: Rea
       <Label>{label}</Label>
       {children}
     </label>
+  );
+}
+
+function SafeNumberInput({
+  field,
+  value,
+  onChange,
+  onBlur,
+}: {
+  field: NumericFormKey;
+  value: string;
+  onChange: (value: string) => void;
+  onBlur: () => void;
+}) {
+  const limits = NUMERIC_LIMITS[field];
+  return (
+    <Input
+      type="number"
+      inputMode="numeric"
+      min={limits.min}
+      max={limits.max}
+      step="1"
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      onBlur={onBlur}
+    />
   );
 }
 
@@ -284,6 +348,9 @@ function FloorPlan({
   setSelectedRoom,
   mode,
   zoom,
+  snapToGrid,
+  showGrid,
+  showDimensions,
 }: {
   rooms: PlanRoom[];
   updateRooms: (rooms: PlanRoom[]) => void;
@@ -291,9 +358,20 @@ function FloorPlan({
   setSelectedRoom: (id: string) => void;
   mode: CanvasMode;
   zoom: number;
+  snapToGrid: boolean;
+  showGrid: boolean;
+  showDimensions: boolean;
 }) {
   const [canvasRef, canvasSize] = useElementSize<HTMLDivElement>();
   const scale = Math.min(1, (canvasSize.width - 26) / 640, (canvasSize.height - 24) / 600) * zoom;
+  const snap = (value: number) => (snapToGrid ? Math.round(value / 8) * 8 : value);
+  const roomFill = (room: PlanRoom) => {
+    if (room.id.startsWith("bedroom")) return "#f7f8fa";
+    if (room.id.startsWith("bathroom")) return "#f1f5f8";
+    if (room.id === "kitchen") return "#f4f5f1";
+    if (room.id === "living") return "#f8f7f3";
+    return room.accent ? "#f8f9fa" : "#fff";
+  };
 
   return (
     <div className="drawing-area" ref={canvasRef}>
@@ -307,6 +385,12 @@ function FloorPlan({
             scaleX={scale}
             scaleY={scale}
           >
+            {showGrid && Array.from({ length: 30 }, (_, index) => (
+              <Line key={`vertical-grid-${index}`} points={[78 + index * 16, 52, 78 + index * 16, 572]} stroke="#eef0f2" strokeWidth={0.7} />
+            ))}
+            {showGrid && Array.from({ length: 33 }, (_, index) => (
+              <Line key={`horizontal-grid-${index}`} points={[78, 52 + index * 16, 552, 52 + index * 16]} stroke="#eef0f2" strokeWidth={0.7} />
+            ))}
             <Line points={[78, 35, 552, 35]} stroke="#8f949b" strokeWidth={1} />
             <Line points={[78, 29, 78, 41]} stroke="#8f949b" strokeWidth={1} />
             <Line points={[552, 29, 552, 41]} stroke="#8f949b" strokeWidth={1} />
@@ -324,7 +408,11 @@ function FloorPlan({
                   updateRooms(
                     rooms.map((current) =>
                       current.id === room.id
-                        ? { ...current, x: event.target.x(), y: event.target.y() }
+                        ? {
+                            ...current,
+                            x: Math.min(552 - current.width, Math.max(78, snap(event.target.x()))),
+                            y: Math.min(572 - current.height, Math.max(52, snap(event.target.y()))),
+                          }
                         : current,
                     ),
                   )
@@ -333,7 +421,7 @@ function FloorPlan({
                 <Rect
                   width={room.width}
                   height={room.height}
-                  fill={room.accent ? "#fafafa" : "#fff"}
+                  fill={roomFill(room)}
                   stroke={selectedRoom === room.id ? "#2563eb" : "#25282d"}
                   strokeWidth={selectedRoom === room.id ? 3 : 4}
                 />
@@ -390,6 +478,12 @@ function FloorPlan({
                   fontSize={11}
                   fill="#575c65"
                 />
+                {showDimensions && (
+                  <>
+                    <Line points={[0, -8, room.width, -8]} stroke="#9aa1aa" strokeWidth={1} />
+                    <Text text={`${Math.max(2, Math.round(room.width / 14))} m`} x={0} y={-22} width={room.width} align="center" fontSize={8} fill="#737b84" />
+                  </>
+                )}
               </Group>
             ))}
           </Layer>
@@ -406,6 +500,9 @@ function App() {
   const [activeTool, setActiveTool] = useState<Tool>("select");
   const [selectedRoom, setSelectedRoom] = useState("living");
   const [zoom, setZoom] = useState(1);
+  const [snapToGrid, setSnapToGrid] = useState(true);
+  const [showGrid, setShowGrid] = useState(true);
+  const [showDimensions, setShowDimensions] = useState(true);
   const [apiHealth, setApiHealth] = useState<"checking" | "online" | "offline">("checking");
   const [mapOpen, setMapOpen] = useState(false);
   const [uploadedPlan, setUploadedPlan] = useState<UploadedPlan | null>(null);
@@ -413,10 +510,18 @@ function App() {
   const [draggingPlan, setDraggingPlan] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const initialPlanCheck = useRef(true);
+  const lastPredictionRequestAt = useRef(0);
+  const roomHistory = useRef<PlanRoom[][]>([]);
+  const roomFuture = useRef<PlanRoom[][]>([]);
+  const [historyVersion, setHistoryVersion] = useState(0);
 
   const { form, rooms, prediction } = project;
-  const areaSqft = Number(form.areaSqft) || 0;
+  const safeFormView = normalizeForm(form);
+  const areaSqft = Number(safeFormView.areaSqft);
   const areaM2 = Math.round(areaSqft * 0.092903);
+  const selectedRoomData = rooms.find((room) => room.id === selectedRoom);
+  const layoutBedrooms = rooms.filter((room) => room.id.startsWith("bedroom")).length;
+  const layoutBathrooms = rooms.filter((room) => room.id.startsWith("bathroom")).length;
   const pricePerSqft = prediction.status === "success" && areaSqft > 0 ? prediction.price / areaSqft : null;
   const mapQuery = [form.locality, form.location, "India"].filter(Boolean).join(", ");
   const mapEmbedUrl = `https://www.google.com/maps?q=${encodeURIComponent(mapQuery)}&output=embed`;
@@ -430,8 +535,45 @@ function App() {
     }));
   };
 
+  const normalizeCurrentForm = () => {
+    setProject((current) => ({
+      ...current,
+      form: normalizeForm(current.form),
+      prediction: { status: "idle" },
+    }));
+  };
+
   const updateRooms = (nextRooms: PlanRoom[]) => {
+    roomHistory.current = [...roomHistory.current.slice(-29), rooms];
+    roomFuture.current = [];
     setProject((current) => ({ ...current, rooms: nextRooms }));
+    setHistoryVersion((version) => version + 1);
+  };
+
+  const undoRooms = () => {
+    const previousRooms = roomHistory.current.pop();
+    if (!previousRooms) return;
+    roomFuture.current = [...roomFuture.current, rooms];
+    setProject((current) => ({ ...current, rooms: previousRooms }));
+    setSelectedRoom(previousRooms[0]?.id ?? "");
+    setHistoryVersion((version) => version + 1);
+  };
+
+  const redoRooms = () => {
+    const nextRooms = roomFuture.current.pop();
+    if (!nextRooms) return;
+    roomHistory.current = [...roomHistory.current, rooms];
+    setProject((current) => ({ ...current, rooms: nextRooms }));
+    setSelectedRoom(nextRooms[0]?.id ?? "");
+    setHistoryVersion((version) => version + 1);
+  };
+
+  const resetGeneratedPlan = () => {
+    const safeForm = normalizeForm(form);
+    const nextRooms = buildPlan(Number(safeForm.bedrooms), Number(safeForm.bathrooms), Number(safeForm.areaSqft));
+    updateRooms(nextRooms);
+    setSelectedRoom(nextRooms.find((room) => room.id === "living")?.id ?? nextRooms[0]?.id ?? "");
+    setZoom(1);
   };
 
   const acceptPlanFile = (file: File) => {
@@ -494,7 +636,8 @@ function App() {
     }
 
     const timer = window.setTimeout(() => {
-      const nextRooms = buildPlan(Number(form.bedrooms), Number(form.bathrooms), Number(form.areaSqft));
+      const safeForm = normalizeForm(form);
+      const nextRooms = buildPlan(Number(safeForm.bedrooms), Number(safeForm.bathrooms), Number(safeForm.areaSqft));
       setProject((current) => ({ ...current, rooms: nextRooms }));
       setSelectedRoom(nextRooms.find((room) => room.id === "living")?.id ?? nextRooms[0]?.id ?? "");
     }, 350);
@@ -523,7 +666,17 @@ function App() {
   }, []);
 
   const predict = async () => {
-    if (areaSqft < 100 || !form.location.trim()) {
+    const now = Date.now();
+    if (now - lastPredictionRequestAt.current < PREDICTION_COOLDOWN_MS) {
+      setProject((current) => ({
+        ...current,
+        prediction: { status: "error", message: "Please wait a moment before sending another prediction." },
+      }));
+      return;
+    }
+    const safeForm = normalizeForm(form);
+    const safeAreaSqft = Number(safeForm.areaSqft);
+    if (safeAreaSqft < 100 || !safeForm.location.trim()) {
       setProject((current) => ({
         ...current,
         prediction: { status: "error", message: "Enter an area of at least 100 sq ft and a location." },
@@ -538,29 +691,30 @@ function App() {
       return;
     }
 
+    lastPredictionRequestAt.current = now;
     setProject((current) => ({ ...current, prediction: { status: "loading" } }));
     try {
       const response = await fetch(`${API_URL}/predict`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          area_sqft: areaSqft,
-          area_type: form.areaType,
-          location: form.location,
-          locality: form.locality || undefined,
-          society: form.society || undefined,
-          bedrooms: optionalNumber(form.bedrooms),
-          bathroom: optionalNumber(form.bathrooms),
-          balcony: optionalNumber(form.balcony),
-          car_parking: optionalNumber(form.carParking),
-          floor_num: optionalNumber(form.floorNumber),
-          total_floors: optionalNumber(form.totalFloors),
-          property_type: form.propertyType,
-          furnishing: form.furnishing,
-          transaction: form.transaction,
-          ownership: form.ownership,
-          facing: form.facing || undefined,
-          overlooking: form.overlooking || undefined,
+          area_sqft: safeAreaSqft,
+          area_type: safeForm.areaType,
+          location: safeForm.location,
+          locality: safeForm.locality || undefined,
+          society: safeForm.society || undefined,
+          bedrooms: optionalNumber(safeForm.bedrooms),
+          bathroom: optionalNumber(safeForm.bathrooms),
+          balcony: optionalNumber(safeForm.balcony),
+          car_parking: optionalNumber(safeForm.carParking),
+          floor_num: optionalNumber(safeForm.floorNumber),
+          total_floors: optionalNumber(safeForm.totalFloors),
+          property_type: safeForm.propertyType,
+          furnishing: safeForm.furnishing,
+          transaction: safeForm.transaction,
+          ownership: safeForm.ownership,
+          facing: safeForm.facing || undefined,
+          overlooking: safeForm.overlooking || undefined,
         }),
       });
       const result = (await response.json()) as { predicted_price_inr?: number; detail?: string };
@@ -697,16 +851,30 @@ function App() {
     return (
       <>
         <div className="canvas-header">
-          <div>
+          <div className="canvas-title-block">
             <h2>Visual floor plan</h2>
-            <p>
-              {areaM2 || "—"} m² <span>•</span> Floor {form.floorNumber || "—"} <span>•</span> {rooms.length} spaces
-            </p>
+            <div className="plan-stats" aria-label="Floor plan summary">
+              <span><strong>{areaM2}</strong> m²</span>
+              <span><strong>{layoutBedrooms}</strong> bedrooms</span>
+              <span><strong>{layoutBathrooms}</strong> bathrooms</span>
+              <span>Floor <strong>{safeFormView.floorNumber}</strong></span>
+            </div>
+            <p className="selected-space">{selectedRoomData ? `${selectedRoomData.label} selected · drag to reposition` : `${rooms.length} editable spaces`}</p>
           </div>
-          <div className="canvas-modes">
-            <Button className={canvasMode === "2d" ? "dark-button compact" : "soft-button compact"} onClick={() => setCanvasMode("2d")}>2D plan</Button>
-            <Button className={canvasMode === "3d" ? "dark-button compact" : "soft-button compact"} onClick={() => setCanvasMode("3d")}>3D view</Button>
-            <Button variant="outline" size="icon" className="soft-button icon-button" onClick={() => document.documentElement.requestFullscreen?.()} aria-label="Fullscreen"><Expand /></Button>
+          <div className="canvas-actions">
+            <div className="canvas-modes">
+              <Button className={canvasMode === "2d" ? "dark-button compact" : "soft-button compact"} onClick={() => setCanvasMode("2d")}>2D plan</Button>
+              <Button className={canvasMode === "3d" ? "dark-button compact" : "soft-button compact"} onClick={() => setCanvasMode("3d")}>3D view</Button>
+              <Button variant="outline" size="icon" className="soft-button icon-button" onClick={() => document.documentElement.requestFullscreen?.()} aria-label="Fullscreen"><Expand /></Button>
+            </div>
+            <div className="plan-utilities" aria-label="Floor plan controls">
+              <Button variant="ghost" size="icon" onClick={undoRooms} disabled={!roomHistory.current.length} title="Undo" aria-label="Undo"><Undo2 /></Button>
+              <Button variant="ghost" size="icon" onClick={redoRooms} disabled={!roomFuture.current.length} title="Redo" aria-label="Redo"><Redo2 /></Button>
+              <Button variant="ghost" size="icon" className={snapToGrid ? "active" : ""} onClick={() => setSnapToGrid((value) => !value)} title="Snap rooms to grid" aria-label="Toggle snap to grid"><Magnet /></Button>
+              <Button variant="ghost" size="icon" className={showGrid ? "active" : ""} onClick={() => setShowGrid((value) => !value)} title="Show grid" aria-label="Toggle grid"><Grid2X2 /></Button>
+              <Button variant="ghost" size="icon" className={showDimensions ? "active" : ""} onClick={() => setShowDimensions((value) => !value)} title="Show dimensions" aria-label="Toggle dimensions"><Ruler /></Button>
+              <Button variant="ghost" size="icon" onClick={resetGeneratedPlan} title="Reset generated plan" aria-label="Reset generated plan"><RotateCcw /></Button>
+            </div>
           </div>
         </div>
         <FloorPlan
@@ -716,6 +884,9 @@ function App() {
           setSelectedRoom={setSelectedRoom}
           mode={canvasMode}
           zoom={zoom}
+          snapToGrid={snapToGrid}
+          showGrid={showGrid}
+          showDimensions={showDimensions}
         />
         <div className="canvas-toolbar">
           <ToolButton label="Select and move" active={activeTool === "select"} onClick={() => applyTool("select")}><MousePointer2 /></ToolButton>
@@ -733,7 +904,7 @@ function App() {
         </div>
       </>
     );
-  }, [section, uploadedPlan, apiHealth, areaM2, form.floorNumber, rooms, canvasMode, selectedRoom, zoom, activeTool]);
+  }, [section, uploadedPlan, apiHealth, areaM2, safeFormView.floorNumber, rooms, canvasMode, selectedRoom, selectedRoomData, layoutBedrooms, layoutBathrooms, zoom, activeTool, snapToGrid, showGrid, showDimensions, historyVersion]);
 
   return (
     <main className="app-shell">
@@ -802,17 +973,17 @@ function App() {
                 <span className="auto-badge"><Sparkles /> Auto plan</span>
               </div>
               <div className="details-form">
-            <Field label="Area (sq ft)"><Input type="number" min="100" max="25000" value={form.areaSqft} onChange={(event) => updateForm("areaSqft", event.target.value)} /></Field>
+            <Field label="Area (sq ft)"><SafeNumberInput field="areaSqft" value={form.areaSqft} onChange={(value) => updateForm("areaSqft", value)} onBlur={normalizeCurrentForm} /></Field>
             <Field label="Area type"><Select value={form.areaType} onValueChange={(value) => updateForm("areaType", value as PropertyForm["areaType"])}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="super">Super area</SelectItem><SelectItem value="carpet">Carpet area</SelectItem></SelectContent></Select></Field>
-            <Field label="Location"><span className="input-with-icon"><Input value={form.location} onChange={(event) => updateForm("location", event.target.value)} /><button type="button" onClick={() => setMapOpen(true)} aria-label="Open location on map"><MapPin /></button></span></Field>
+            <Field label="Location"><span className="input-with-icon"><Input value={form.location} onChange={(event) => updateForm("location", event.target.value)} onBlur={normalizeCurrentForm} /><button type="button" onClick={() => setMapOpen(true)} aria-label="Open location on map"><MapPin /></button></span></Field>
             <Field label="Locality"><Input value={form.locality} onChange={(event) => updateForm("locality", event.target.value)} /></Field>
             <Field label="Society" wide><Input value={form.society} onChange={(event) => updateForm("society", event.target.value)} /></Field>
-            <Field label="Bedrooms"><Input type="number" min="0" max="20" value={form.bedrooms} onChange={(event) => updateForm("bedrooms", event.target.value)} /></Field>
-            <Field label="Bathrooms"><Input type="number" min="0" max="20" value={form.bathrooms} onChange={(event) => updateForm("bathrooms", event.target.value)} /></Field>
-            <Field label="Balconies"><Input type="number" min="0" max="20" value={form.balcony} onChange={(event) => updateForm("balcony", event.target.value)} /></Field>
-            <Field label="Parking spaces"><Input type="number" min="0" max="20" value={form.carParking} onChange={(event) => updateForm("carParking", event.target.value)} /></Field>
-            <Field label="Current floor"><Input type="number" min="-2" max="250" value={form.floorNumber} onChange={(event) => updateForm("floorNumber", event.target.value)} /></Field>
-            <Field label="Total floors"><Input type="number" min="1" max="250" value={form.totalFloors} onChange={(event) => updateForm("totalFloors", event.target.value)} /></Field>
+            <Field label="Bedrooms"><SafeNumberInput field="bedrooms" value={form.bedrooms} onChange={(value) => updateForm("bedrooms", value)} onBlur={normalizeCurrentForm} /></Field>
+            <Field label="Bathrooms"><SafeNumberInput field="bathrooms" value={form.bathrooms} onChange={(value) => updateForm("bathrooms", value)} onBlur={normalizeCurrentForm} /></Field>
+            <Field label="Balconies"><SafeNumberInput field="balcony" value={form.balcony} onChange={(value) => updateForm("balcony", value)} onBlur={normalizeCurrentForm} /></Field>
+            <Field label="Parking spaces"><SafeNumberInput field="carParking" value={form.carParking} onChange={(value) => updateForm("carParking", value)} onBlur={normalizeCurrentForm} /></Field>
+            <Field label="Current floor"><SafeNumberInput field="floorNumber" value={form.floorNumber} onChange={(value) => updateForm("floorNumber", value)} onBlur={normalizeCurrentForm} /></Field>
+            <Field label="Total floors"><SafeNumberInput field="totalFloors" value={form.totalFloors} onChange={(value) => updateForm("totalFloors", value)} onBlur={normalizeCurrentForm} /></Field>
             <Field label="Property type"><Select value={form.propertyType} onValueChange={(value) => updateForm("propertyType", value as PropertyForm["propertyType"])}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{["flat", "villa", "house", "builder_floor", "penthouse", "studio", "plot", "unknown"].map((value) => <SelectItem key={value} value={value}>{readable(value)}</SelectItem>)}</SelectContent></Select></Field>
             <Field label="Furnishing"><Select value={form.furnishing} onValueChange={(value) => updateForm("furnishing", value as PropertyForm["furnishing"])}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{["unfurnished", "semi_furnished", "furnished", "unknown"].map((value) => <SelectItem key={value} value={value}>{readable(value)}</SelectItem>)}</SelectContent></Select></Field>
             <Field label="Transaction"><Select value={form.transaction} onValueChange={(value) => updateForm("transaction", value as PropertyForm["transaction"])}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{["resale", "new_property", "other", "unknown"].map((value) => <SelectItem key={value} value={value}>{readable(value)}</SelectItem>)}</SelectContent></Select></Field>
@@ -820,7 +991,6 @@ function App() {
             <Field label="Facing"><Input value={form.facing} onChange={(event) => updateForm("facing", event.target.value)} /></Field>
             <Field label="Overlooking"><Input value={form.overlooking} onChange={(event) => updateForm("overlooking", event.target.value)} /></Field>
               </div>
-              <p className="auto-note">Area, bedrooms and bathrooms refresh the plan automatically.</p>
             </>
           )}
         </Card>
@@ -837,7 +1007,7 @@ function App() {
                   <div><dt>File</dt><dd>{uploadedPlan?.name ?? "No file"}</dd></div>
                   <div><dt>Format</dt><dd>{uploadedPlan ? uploadedPlan.type.split("/").pop()?.toUpperCase() : "—"}</dd></div>
                   <div><dt>Size</dt><dd>{uploadedPlan ? `${(uploadedPlan.size / 1024 / 1024).toFixed(2)} MB` : "—"}</dd></div>
-                  <div><dt>Location</dt><dd>{form.location || "—"}</dd></div>
+                  <div><dt>Location</dt><dd>{safeFormView.location}</dd></div>
                 </dl>
               </Card>
               <Card className={`prediction-card upload-analysis-card card ${uploadAnalysis.status}`}>
@@ -869,10 +1039,10 @@ function App() {
             <h2>Property snapshot</h2>
             <dl>
               <div><dt>Area</dt><dd>{areaSqft ? `${areaSqft.toLocaleString("en-IN")} sq ft` : "—"}</dd></div>
-              <div><dt>Configuration</dt><dd>{form.bedrooms || "—"} bed · {form.bathrooms || "—"} bath</dd></div>
+              <div><dt>Configuration</dt><dd>{safeFormView.bedrooms} bed · {safeFormView.bathrooms} bath</dd></div>
               <div><dt>Property</dt><dd>{readable(form.propertyType)}</dd></div>
-              <div><dt>Location</dt><dd>{form.location || "—"}</dd></div>
-              <div><dt>Floor</dt><dd>{form.floorNumber || "—"} / {form.totalFloors || "—"}</dd></div>
+              <div><dt>Location</dt><dd>{safeFormView.location}</dd></div>
+              <div><dt>Floor</dt><dd>{safeFormView.floorNumber} / {safeFormView.totalFloors}</dd></div>
             </dl>
           </Card>
 
@@ -901,7 +1071,6 @@ function App() {
             <Button className="dark-button predict-button" onClick={predict} disabled={prediction.status === "loading"}>
               <Sparkles /> {prediction.status === "loading" ? "Predicting price…" : "Predict price"}
             </Button>
-            <p className="honesty-note">No fallback estimate. A value appears only when the real API responds.</p>
           </Card>
             </>
           )}
