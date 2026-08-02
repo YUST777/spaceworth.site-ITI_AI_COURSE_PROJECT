@@ -292,6 +292,8 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 
 .workspace.full-page-mode > .details-panel, .workspace.full-page-mode > .canvas-panel, .workspace.full-page-mode > .summary-column { display: none; }
 .developer-page { grid-column: 2 / -1; min-width: 0; min-height: 0; display: grid; grid-template-columns: 214px minmax(500px, 1fr) 228px; gap: 12px; }
+.developer-page-compact { grid-template-columns: 190px minmax(500px, 1fr); }
+.developer-page-compact .developer-aside { display: none; }
 .developer-sidebar, .developer-content, .developer-aside { min-width: 0; min-height: 0; }
 .developer-sidebar { display: flex; flex-direction: column; padding: 17px 14px; overflow: hidden; }
 .developer-sidebar header { padding: 2px 5px 15px; border-bottom: 1px solid #eceff1; }

@@ -7,6 +7,7 @@ import os
 import re
 import time
 from collections import defaultdict, deque
+import secrets
 from pathlib import Path
 from threading import Lock
 from typing import Literal
@@ -276,6 +277,25 @@ def initialise_database() -> None:
             """
             CREATE INDEX IF NOT EXISTS spaceworth_plan_analyses_project_created_idx
             ON spaceworth_plan_analyses (project_id, created_at DESC)
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS spaceworth_api_keys (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                name VARCHAR(120) NOT NULL DEFAULT 'API Key',
+                key_prefix VARCHAR(12) NOT NULL,
+                key_hash CHAR(64) NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                expires_at TIMESTAMPTZ,
+                enabled BOOLEAN NOT NULL DEFAULT TRUE
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS spaceworth_api_keys_created_idx
+            ON spaceworth_api_keys (created_at DESC)
             """
         )
 
@@ -761,3 +781,86 @@ async def analyze_floor_plan(
         "prediction_request": prediction_request.model_dump(mode="json"),
         "predicted_price_inr": predicted_price,
     }
+
+
+class CreateApiKeyRequest(BaseModel):
+    name: str = Field(default="API Key", min_length=1, max_length=120)
+
+
+@app.post("/api-keys", dependencies=[Depends(enforce_rate_limit)])
+def create_api_key(payload: CreateApiKeyRequest) -> dict[str, object]:
+    raw_key = f"sw_live_{secrets.token_hex(16)}"
+    key_prefix = raw_key[-4:]
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    with database_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO spaceworth_api_keys (name, key_prefix, key_hash)
+            VALUES (%s, %s, %s)
+            RETURNING id, created_at
+            """,
+            (payload.name.strip(), key_prefix, key_hash),
+        )
+        row = cursor.fetchone()
+    return {
+        "id": str(row[0]),
+        "name": payload.name.strip(),
+        "key": raw_key,
+        "key_prefix": key_prefix,
+        "created_at": row[1].isoformat(),
+        "expires": None,
+        "enabled": True,
+    }
+
+
+@app.get("/api-keys")
+def list_api_keys() -> dict[str, list[dict[str, object]]]:
+    with database_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT id, name, key_prefix, created_at, expires_at, enabled
+            FROM spaceworth_api_keys
+            ORDER BY created_at DESC
+            LIMIT 100
+            """
+        )
+        rows = cursor.fetchall()
+    return {
+        "keys": [
+            {
+                "id": str(row[0]),
+                "name": row[1],
+                "key_prefix": row[2],
+                "created_at": row[3].isoformat(),
+                "expires": row[4].isoformat() if row[4] else None,
+                "enabled": row[5],
+            }
+            for row in rows
+        ]
+    }
+
+
+@app.patch("/api-keys/{key_id}", dependencies=[Depends(enforce_rate_limit)])
+def toggle_api_key(key_id: str, enabled: bool = True) -> dict[str, object]:
+    with database_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE spaceworth_api_keys SET enabled = %s WHERE id = %s
+            RETURNING id, enabled
+            """,
+            (enabled, key_id),
+        )
+        row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="API key not found")
+    return {"id": str(row[0]), "enabled": row[1]}
+
+
+@app.delete("/api-keys/{key_id}", dependencies=[Depends(enforce_rate_limit)])
+def delete_api_key(key_id: str) -> dict[str, str]:
+    with database_connection() as connection, connection.cursor() as cursor:
+        cursor.execute("DELETE FROM spaceworth_api_keys WHERE id = %s RETURNING id", (key_id,))
+        row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="API key not found")
+    return {"status": "deleted", "id": str(row[0])}
