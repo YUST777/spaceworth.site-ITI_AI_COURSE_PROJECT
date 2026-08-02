@@ -121,13 +121,44 @@ type UploadedPlan = {
   size: number;
   type: string;
   url: string;
+  file: File;
+};
+
+type DetectedPlanRoom = {
+  label: string;
+  category: string;
+  dimensions: string | null;
+  area_sqft: number | null;
+  confidence: number;
+};
+
+type PlanAnalysisResult = {
+  analysis_id: string;
+  query_id: string;
+  vision_model: string;
+  predicted_price_inr: number;
+  prediction_request: Record<string, unknown>;
+  analysis: {
+    usable: boolean;
+    summary: string;
+    total_area_sqft: number | null;
+    area_source: "printed_total" | "calculated_from_dimensions" | "not_available";
+    bedrooms: number | null;
+    bathrooms: number | null;
+    balconies: number | null;
+    parking_spaces: number | null;
+    property_type: PropertyForm["propertyType"];
+    rooms: DetectedPlanRoom[];
+    warnings: string[];
+    confidence: number;
+  };
 };
 
 type UploadAnalysisState =
   | { status: "idle" }
   | { status: "ready" }
-  | { status: "loading" }
-  | { status: "success"; price: number }
+  | { status: "loading"; fileName: string }
+  | { status: "success"; result: PlanAnalysisResult }
   | { status: "error"; message: string };
 
 type Section = "plan" | "upload" | "proof" | "settings";
@@ -152,7 +183,7 @@ const API_URL = (
   import.meta.env.VITE_PREDICTION_API_URL ??
   "https://iti-house-price-api-production.up.railway.app"
 ).replace(/\/$/, "");
-const PLAN_API_URL = (import.meta.env.VITE_PLAN_ANALYSIS_API_URL ?? "").replace(/\/$/, "");
+const PLAN_API_URL = (import.meta.env.VITE_PLAN_ANALYSIS_API_URL ?? API_URL).replace(/\/$/, "");
 const STORAGE_KEY = "spacemap-project-v2";
 const PROJECT_ID_KEY = "spacemap-project-id-v1";
 const WELCOME_TOUR_KEY = "spacemap-welcome-tour-v1";
@@ -168,6 +199,12 @@ const SECTION_PATHS: Record<Section, string> = {
   proof: "/proof",
   settings: "/settings",
 };
+
+const EXAMPLE_PLANS = [
+  { id: "two-bedroom-suite", name: "Two-bedroom suite", detail: "2 bed · 2.5 bath", src: "/examples/two-bedroom-suite.png" },
+  { id: "compact-one-bedroom", name: "Compact one-bedroom", detail: "495 sq ft labeled", src: "/examples/compact-one-bedroom.png" },
+  { id: "three-bedroom-upper-floor", name: "Three-bedroom upper floor", detail: "3 bed · dimensioned", src: "/examples/three-bedroom-upper-floor.png" },
+] as const;
 
 function sectionFromPath(pathname: string): Section {
   const match = (Object.entries(SECTION_PATHS) as Array<[Section, string]>).find(([, path]) => path === pathname);
@@ -266,6 +303,13 @@ const readable = (value: string) =>
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+
+async function loadExamplePlan(src: string, name: string): Promise<File> {
+  const response = await fetch(src);
+  if (!response.ok) throw new Error("The example floor plan could not be loaded.");
+  const planBlob = await response.blob();
+  return new File([planBlob], `${name}.png`, { type: planBlob.type || "image/png" });
+}
 
 const optionalNumber = (value: string) => (value.trim() === "" ? undefined : Number(value));
 
@@ -995,7 +1039,7 @@ function App() {
           {
             element: useCenteredMobileTour ? undefined : ".tour-welcome",
             popover: {
-              title: "Welcome to SpaceMap",
+              title: "Welcome to SpaceWorth",
               description: "Build a property profile, shape the editable floor plan, and keep every project synchronized automatically.",
               side: "bottom",
               align: "center",
@@ -1047,12 +1091,12 @@ function App() {
       setUploadAnalysis({ status: "error", message: "Use a PNG, JPG, WEBP or PDF floor plan." });
       return;
     }
-    if (file.size > 20 * 1024 * 1024) {
-      setUploadAnalysis({ status: "error", message: "The file must be 20 MB or smaller." });
+    if (file.size > 12 * 1024 * 1024) {
+      setUploadAnalysis({ status: "error", message: "The file must be 12 MB or smaller." });
       return;
     }
     if (uploadedPlan) URL.revokeObjectURL(uploadedPlan.url);
-    setUploadedPlan({ name: file.name, size: file.size, type: file.type, url: URL.createObjectURL(file) });
+    setUploadedPlan({ name: file.name, size: file.size, type: file.type, url: URL.createObjectURL(file), file });
     setUploadAnalysis({ status: "ready" });
     navigateTo("upload");
   };
@@ -1064,29 +1108,66 @@ function App() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
+  const analyzePlanFile = async (file: File) => {
+    setUploadAnalysis({ status: "loading", fileName: file.name });
+    setMobilePanel("result");
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      body.append("property", JSON.stringify(predictionPayload(form)));
+      body.append("project_id", getProjectId());
+      const response = await fetch(`${PLAN_API_URL}/analyze`, { method: "POST", body });
+      const result = (await response.json()) as PlanAnalysisResult & { detail?: string };
+      if (!response.ok || typeof result.predicted_price_inr !== "number" || !result.analysis) {
+        throw new Error(result.detail ?? "The CAD analysis service returned an invalid response.");
+      }
+      setUploadAnalysis({ status: "success", result });
+      const detected = result.prediction_request;
+      setProject((current) => ({
+        ...current,
+        form: {
+          ...current.form,
+          areaSqft: String(detected.area_sqft ?? current.form.areaSqft),
+          areaType: (detected.area_type as PropertyForm["areaType"] | undefined) ?? current.form.areaType,
+          bedrooms: String(detected.bedrooms ?? current.form.bedrooms),
+          bathrooms: String(detected.bathroom ?? current.form.bathrooms),
+          balcony: String(detected.balcony ?? current.form.balcony),
+          carParking: String(detected.car_parking ?? current.form.carParking),
+          propertyType: (detected.property_type as PropertyForm["propertyType"] | undefined) ?? current.form.propertyType,
+        },
+        prediction: {
+          status: "success",
+          price: result.predicted_price_inr,
+          queryId: result.query_id,
+          queryIdSource: "server",
+          request: result.prediction_request,
+          response: { query_id: result.query_id, predicted_price_inr: result.predicted_price_inr },
+        },
+        updatedAt: Date.now(),
+      }));
+    } catch (error) {
+      setUploadAnalysis({ status: "error", message: error instanceof Error ? error.message : "CAD analysis failed." });
+    }
+  };
+
   const analyzeUploadedPlan = async () => {
-    if (!uploadedPlan || !fileInputRef.current?.files?.[0]) {
+    if (!uploadedPlan) {
       setUploadAnalysis({ status: "error", message: "Upload a property plan first." });
       return;
     }
-    if (!PLAN_API_URL) {
-      setUploadAnalysis({ status: "error", message: "The image-analysis API is not connected yet. Your file stays local and no fake valuation was created." });
-      return;
-    }
+    await analyzePlanFile(uploadedPlan.file);
+  };
 
-    setUploadAnalysis({ status: "loading" });
+  const analyzeExamplePlan = async (example: (typeof EXAMPLE_PLANS)[number]) => {
+    setUploadAnalysis({ status: "loading", fileName: example.name });
     try {
-      const body = new FormData();
-      body.append("file", fileInputRef.current.files[0]);
-      body.append("property", JSON.stringify(form));
-      const response = await fetch(`${PLAN_API_URL}/analyze`, { method: "POST", body });
-      const result = (await response.json()) as { predicted_price_inr?: number; detail?: string };
-      if (!response.ok || typeof result.predicted_price_inr !== "number") {
-        throw new Error(result.detail ?? "The image analysis service returned an invalid response.");
-      }
-      setUploadAnalysis({ status: "success", price: result.predicted_price_inr });
+      const file = await loadExamplePlan(example.src, example.id);
+      if (uploadedPlan) URL.revokeObjectURL(uploadedPlan.url);
+      setUploadedPlan({ name: file.name, size: file.size, type: file.type, url: URL.createObjectURL(file), file });
+      navigateTo("upload");
+      await analyzePlanFile(file);
     } catch (error) {
-      setUploadAnalysis({ status: "error", message: error instanceof Error ? error.message : "Image analysis failed." });
+      setUploadAnalysis({ status: "error", message: error instanceof Error ? error.message : "The example plan could not be analyzed." });
     }
   };
 
@@ -1495,7 +1576,7 @@ function App() {
       <Card className="topbar card tour-welcome">
         <div className="brand">
           <img src="/logo.svg" alt="" />
-          <span>SpaceMap</span>
+          <span>SpaceWorth</span>
         </div>
         <nav className="top-tabs" aria-label="Main product views">
           <a href={SECTION_PATHS.plan} aria-current={section === "plan" ? "page" : undefined} className={section === "plan" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("plan"); }}>Price my home</a>
@@ -1733,16 +1814,16 @@ function App() {
                 <div className="proof-story-grid">
                   <div className="proof-copy">
                     <p>The first creative idea was to make the inputs visible. If a user chooses three bedrooms, the application should not only send the number <code>3</code>; it should generate a plan with three editable bedroom spaces so the user can understand what the data represents.</p>
-                    <p>The next question was more ambitious: what if the owner does not know the area or room counts, but already has an engineering drawing, blueprint, or CAD image? The proposed pipeline accepts the image, extracts walls and openings with a separate deep-learning parser, converts the geometry into structured JSON, asks the user to confirm uncertain fields, and then sends the confirmed property data to the existing price model.</p>
-                    <p>The architecture deliberately keeps the two models separate. The validated price model understands structured tabular features, not pixels. A vision parser must first produce geometry and confidence values before price prediction is safe.</p>
+                    <p>The next question was more ambitious: what if the owner does not know the area or room counts, but already has an engineering drawing, blueprint, or CAD image? The live pipeline now sends that file to Gemini for evidence-based room, dimension, and area extraction, validates the structured response, and passes the detected property fields into the existing price model.</p>
+                    <p>The architecture deliberately keeps the two models separate. Gemini reads the drawing and reports confidence and warnings; the validated tabular ensemble predicts the price from the extracted property fields. When a real area is not printed or defensibly calculable, the vision step keeps it unknown instead of guessing from pixels.</p>
                   </div>
                   <aside className="proof-truth-card">
                     <span className="truth-status"><CircleDot /> Honest implementation status</span>
                     <h3>What works now vs. what is next</h3>
                     <dl>
-                      <div><dt>Live now</dt><dd>CAD image selection, validation, local preview, upload metadata, and the editable generated plan.</dd></div>
-                      <div><dt>Researched</dt><dd>A pretrained U-Net floor-plan parser baseline and a JSON geometry contract.</dd></div>
-                      <div><dt>Not claimed as live</dt><dd>Automatic image-to-geometry inference remains disabled until the separate parser service is deployed and benchmarked.</dd></div>
+                      <div><dt>Live now</dt><dd>PNG, JPG, WEBP, and PDF analysis; structured room and dimension extraction; confidence and warnings; saved analysis traces; and immediate price prediction.</dd></div>
+                      <div><dt>Try without a file</dt><dd>Three included example plans run through the same real Gemini and price-model endpoint when clicked.</dd></div>
+                      <div><dt>Deliberate boundary</dt><dd>The system does not claim exact wall geometry or infer real square footage from pixel dimensions alone.</dd></div>
                     </dl>
                     <a className="proof-inline-link" href={`${REPO_BLOB_URL}/docs/cad-image-parser-research.md`} target="_blank" rel="noreferrer">Read the CAD parser decision <ExternalLink /></a>
                   </aside>
@@ -1758,7 +1839,7 @@ function App() {
                   <article><span>01</span><strong>Accuracy needs a trustworthy test</strong><p>A higher number is worthless if price text or duplicate listings leak into evaluation.</p></article>
                   <article><span>02</span><strong>The model contract shapes the UI</strong><p>Every frontend field must map to the exact schema and preprocessing used during training.</p></article>
                   <article><span>03</span><strong>Deployment is part of ML engineering</strong><p>A model is not a product until its dependencies, artifact, memory, cold start, and public API all work together.</p></article>
-                  <article><span>04</span><strong>Creative features still need boundaries</strong><p>The CAD vision idea is documented as a next-stage parser instead of being presented as finished without evidence.</p></article>
+                  <article><span>04</span><strong>Creative features still need boundaries</strong><p>The live CAD workflow reports confidence and warnings, while unsupported area or geometry claims remain explicitly unknown.</p></article>
                 </div>
                 <blockquote className="proof-final-quote">“The hardest thing I learned was how to deploy a real ML model so a web application can actually use it. The biggest improvement was learning to prove every claim with a metric, a commit, an artifact, or a live request.”</blockquote>
               </section>
@@ -1810,9 +1891,29 @@ function App() {
                   <span>Click to browse or drag a file here</span>
                 </span>
                 <span className="upload-format-row">
-                  <em>PNG</em><em>JPG</em><em>WEBP</em><em>PDF</em><em>20 MB max</em>
+                  <em>PNG</em><em>JPG</em><em>WEBP</em><em>PDF</em><em>12 MB max</em>
                 </span>
               </button>
+              <div className="example-plan-section">
+                <div className="example-plan-heading">
+                  <div><span className="eyebrow">Try it instantly</span><strong>Example floor plans</strong></div>
+                  <Sparkles />
+                </div>
+                <div className="example-plan-grid">
+                  {EXAMPLE_PLANS.map((example) => (
+                    <button
+                      key={example.id}
+                      type="button"
+                      className="example-plan-card"
+                      onClick={() => void analyzeExamplePlan(example)}
+                      disabled={uploadAnalysis.status === "loading"}
+                    >
+                      <img src={example.src} alt={`${example.name} example floor plan`} />
+                      <span><strong>{example.name}</strong><small>{example.detail} · Click to analyze</small></span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </>
           ) : (
             <>
@@ -1874,17 +1975,33 @@ function App() {
                 </div>
                 <div className="prediction-value">
                   {uploadAnalysis.status === "success" ? (
-                    <><strong>{formatCurrency(uploadAnalysis.price)}</strong><span>Returned by the configured image-analysis API.</span></>
+                    <><strong>{formatCurrency(uploadAnalysis.result.predicted_price_inr)}</strong><span>{uploadAnalysis.result.analysis.summary}</span></>
                   ) : uploadAnalysis.status === "loading" ? (
-                    <><strong>Analyzing…</strong><span>Reading the uploaded plan and property context.</span></>
+                    <><strong>Analyzing…</strong><span>Gemini is reading {uploadAnalysis.fileName}, validating detected details, then running the price model.</span></>
                   ) : (
                     <strong className="prediction-placeholder" aria-label="No image valuation yet">—</strong>
                   )}
                 </div>
                 {uploadAnalysis.status === "error" && <p className="prediction-error">{uploadAnalysis.message}</p>}
-                <div className="analysis-checks"><span>Room geometry</span><span>Visible dimensions</span><span>Property context</span></div>
+                {uploadAnalysis.status === "success" ? (
+                  <>
+                    <div className="cad-result-metrics">
+                      <span><small>Area</small><strong>{uploadAnalysis.result.analysis.total_area_sqft ? `${uploadAnalysis.result.analysis.total_area_sqft.toLocaleString("en-IN")} ft²` : "Context"}</strong></span>
+                      <span><small>Layout</small><strong>{uploadAnalysis.result.analysis.bedrooms ?? "—"} bed · {uploadAnalysis.result.analysis.bathrooms ?? "—"} bath</strong></span>
+                      <span><small>Confidence</small><strong>{Math.round(uploadAnalysis.result.analysis.confidence * 100)}%</strong></span>
+                    </div>
+                    <div className="cad-detected-rooms">
+                      {uploadAnalysis.result.analysis.rooms.slice(0, 4).map((room, index) => (
+                        <span key={`${room.label}-${index}`}><strong>{room.label}</strong><small>{room.dimensions ?? readable(room.category)}</small></span>
+                      ))}
+                    </div>
+                    <div className="cad-analysis-trace"><span>Analysis ID</span><code>{uploadAnalysis.result.analysis_id}</code><small>{uploadAnalysis.result.vision_model} → 90.64% R² price ensemble</small></div>
+                  </>
+                ) : (
+                  <div className="analysis-checks"><span>Read rooms and labels</span><span>Extract visible dimensions</span><span>Run the live price model</span></div>
+                )}
                 <Button className="dark-button predict-button" onClick={analyzeUploadedPlan} disabled={!uploadedPlan || uploadAnalysis.status === "loading"}>
-                  <Sparkles /> {uploadAnalysis.status === "loading" ? "Analyzing plan…" : "Analyze uploaded plan"}
+                  <Sparkles /> {uploadAnalysis.status === "loading" ? "Analyzing plan…" : uploadAnalysis.status === "success" ? "Analyze again" : "Analyze uploaded plan"}
                 </Button>
               </Card>
             </>

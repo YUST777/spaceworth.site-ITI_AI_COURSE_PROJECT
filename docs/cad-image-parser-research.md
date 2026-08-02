@@ -1,47 +1,61 @@
-# CAD image parser decision
+# CAD image analysis decision
 
-## Selected baseline
+## Live implementation
 
-Use [`Yytsi/floorplan-to-3d`](https://github.com/Yytsi/floorplan-to-3d) as the first integration baseline.
+SpaceWorth uses Gemini 3.5 Flash-Lite as the first production implementation for uploaded floor plans and CAD drawings. The existing Railway FastAPI service accepts PNG, JPG, WEBP and PDF files through `POST /analyze`, sends the file to Gemini and validates the response against a structured Pydantic schema before using any extracted value.
 
-- MIT licensed.
-- Includes a FastAPI server and Docker workflow.
-- Uses a pretrained U-Net wall/opening segmentation model.
-- Publishes a roughly 98 MB model checkpoint on Hugging Face.
-- Produces structured wall and opening geometry that can be serialized as JSON.
-- Runs on CPU or CUDA, so it is realistic to benchmark as a separate Railway service.
+Gemini is responsible for reading information that is visible in the drawing:
 
-The upstream server currently accepts SVG uploads. Our adapter must also accept PNG, JPG and WEBP by passing the decoded raster image into the extractor instead of requiring SVG rendering.
+- room labels and room types;
+- bedroom, bathroom, balcony and parking counts;
+- printed dimensions and dimension text;
+- total area only when it is explicitly printed or can be calculated from reliable printed dimensions;
+- per-room confidence, overall confidence and warnings.
 
-## Output contract
+The service never converts image pixels into square footage. When a drawing has no scale or trustworthy printed dimensions, `total_area_sqft` remains `null` and the existing property area is retained.
 
-The parser service should return geometry only. The existing 90.64% R² price model does not understand images directly.
+## Live response contract
+
+The analysis response includes the validated CAD interpretation and the result from the price model in one request. A representative shape is:
 
 ```json
 {
-  "image_width": 1600,
-  "image_height": 1200,
-  "walls": [
-    { "polygon": [[120, 90], [860, 90], [860, 112], [120, 112]] }
-  ],
-  "openings": [
-    { "type": "door", "polygon": [[410, 90], [475, 90], [475, 112], [410, 112]] }
-  ],
-  "rooms": [],
-  "confidence": 0.86
+  "analysis_id": "cad_01K...",
+  "query_id": "7e0e...",
+  "predicted_price_inr": 7303740.70,
+  "vision_model": "gemini-3.5-flash-lite",
+  "analysis": {
+    "usable": true,
+    "property_type": "flat",
+    "bedrooms": 2,
+    "bathrooms": 2,
+    "balconies": 1,
+    "parking_spaces": null,
+    "total_area_sqft": 1200,
+    "area_source": "printed_total",
+    "rooms": [
+      {
+        "label": "Master Bedroom",
+        "category": "bedroom",
+        "dimensions": "14 ft x 12 ft",
+        "area_sqft": 168,
+        "confidence": 0.94
+      }
+    ],
+    "warnings": [],
+    "confidence": 0.95
+  }
 }
 ```
 
-The frontend can render this geometry and combine it with the user's bedrooms, bathrooms, area and location before calling the existing Railway price API.
+## Price-model boundary
 
-## Deployment plan
+The held-out 90.64% R2 tabular ensemble remains separate from Gemini. Gemini does not estimate the property price. The API merges only validated extracted property fields into the normal `PropertyInput`, runs the same existing ensemble used by `POST /predict` and stores both the CAD trace and prediction in PostgreSQL.
 
-1. Keep the current price API as its own Railway service.
-2. Create a separate `cad-parser-api` service with a strict upload limit and request rate limit.
-3. Download the parser checkpoint during the image build, not on every request.
-4. Benchmark cold start, peak RAM and one real PNG before enabling the upload button in production.
-5. Connect `VITE_PLAN_ANALYSIS_API_URL` only after the parser returns real geometry.
+This separation keeps image interpretation auditable and preserves the existing model's evaluation claim. Users can still edit their normal property details before starting an analysis, and those values act as fallbacks when the drawing cannot supply a field reliably.
 
-## Heavier alternative
+## Open-source segmentation later
 
-[`Cornell-VAILab/Raster2Seq`](https://github.com/Cornell-VAILab/Raster2Seq) has stronger room/icon polygon output and an MIT license, but its published checkpoint is about 1.45 GB and its documented environment uses CUDA 12.1. It is not the right first target for the current Railway trial.
+An open-source floor-plan segmentation model may be added later to draw wall, door and window overlays as extra visual evidence. [`Yytsi/floorplan-to-3d`](https://github.com/Yytsi/floorplan-to-3d) remains a possible benchmark because it is MIT licensed, has a relatively small checkpoint and can run on CPU or CUDA.
+
+That future component would not replace Gemini's OCR and label extraction, and it would not feed pixel-derived area into the price model. SpaceWorth does not currently claim image-to-geometry reconstruction, wall polygons, door polygons, window polygons or generated 3D output as live features.

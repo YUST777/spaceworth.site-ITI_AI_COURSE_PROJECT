@@ -4,7 +4,8 @@
   "buildCommand": "npm --prefix frontend run build",
   "outputDirectory": "frontend/dist",
   "env": {
-    "VITE_PREDICTION_API_URL": "https://iti-house-price-api-production.up.railway.app"
+    "VITE_PREDICTION_API_URL": "https://iti-house-price-api-production.up.railway.app",
+    "VITE_PLAN_ANALYSIS_API_URL": "https://iti-house-price-api-production.up.railway.app"
   },
   "rewrites": [
     {

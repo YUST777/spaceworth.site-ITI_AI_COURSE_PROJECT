@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 import os
 import re
 import time
@@ -10,11 +13,12 @@ from typing import Literal
 from uuid import uuid4
 
 import joblib
+import httpx
 import numpy as np
 import pandas as pd
 import psycopg
 import torch
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Security
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, Security, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from psycopg.types.json import Jsonb
@@ -28,10 +32,16 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 ALLOWED_ORIGINS = [origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "*").split(",") if origin.strip()]
 RATE_LIMIT_REQUESTS = max(1, int(os.getenv("RATE_LIMIT_REQUESTS", "30")))
 RATE_LIMIT_WINDOW_SECONDS = max(1, int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60")))
+PLAN_RATE_LIMIT_REQUESTS = max(1, int(os.getenv("PLAN_RATE_LIMIT_REQUESTS", "6")))
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+MAX_PLAN_FILE_BYTES = max(1, int(os.getenv("MAX_PLAN_FILE_BYTES", str(12 * 1024 * 1024))))
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 request_windows: defaultdict[str, deque[float]] = defaultdict(deque)
+plan_request_windows: defaultdict[str, deque[float]] = defaultdict(deque)
 rate_limit_lock = Lock()
 project_id_pattern = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
+allowed_plan_types = {"image/png", "image/jpeg", "image/webp", "application/pdf"}
 
 
 class EntityEmbeddingRegressor(nn.Module):
@@ -92,6 +102,106 @@ class ProjectPayload(BaseModel):
     upload_metadata: dict[str, object] | None = None
 
 
+class DetectedRoom(BaseModel):
+    label: str = Field(min_length=1, max_length=100)
+    category: Literal[
+        "bedroom",
+        "bathroom",
+        "living_room",
+        "kitchen",
+        "dining_room",
+        "balcony",
+        "parking",
+        "utility",
+        "hallway",
+        "other",
+    ]
+    dimensions: str | None = Field(default=None, max_length=80)
+    area_sqft: float | None = Field(default=None, ge=0, le=25_000)
+    confidence: float = Field(ge=0, le=1)
+
+
+class FloorPlanAnalysis(BaseModel):
+    usable: bool
+    summary: str = Field(min_length=1, max_length=500)
+    total_area_sqft: float | None = Field(default=None, ge=100, le=25_000)
+    area_source: Literal["printed_total", "calculated_from_dimensions", "not_available"]
+    bedrooms: int | None = Field(default=None, ge=0, le=20)
+    bathrooms: int | None = Field(default=None, ge=0, le=20)
+    balconies: int | None = Field(default=None, ge=0, le=20)
+    parking_spaces: int | None = Field(default=None, ge=0, le=20)
+    property_type: Literal["flat", "villa", "house", "builder_floor", "penthouse", "studio", "plot", "unknown"]
+    rooms: list[DetectedRoom] = Field(default_factory=list, max_length=40)
+    warnings: list[str] = Field(default_factory=list, max_length=12)
+    confidence: float = Field(ge=0, le=1)
+
+
+floor_plan_response_schema = {
+    "type": "OBJECT",
+    "properties": {
+        "usable": {"type": "BOOLEAN"},
+        "summary": {"type": "STRING"},
+        "total_area_sqft": {"type": "NUMBER", "nullable": True},
+        "area_source": {
+            "type": "STRING",
+            "enum": ["printed_total", "calculated_from_dimensions", "not_available"],
+        },
+        "bedrooms": {"type": "INTEGER", "nullable": True},
+        "bathrooms": {"type": "INTEGER", "nullable": True},
+        "balconies": {"type": "INTEGER", "nullable": True},
+        "parking_spaces": {"type": "INTEGER", "nullable": True},
+        "property_type": {
+            "type": "STRING",
+            "enum": ["flat", "villa", "house", "builder_floor", "penthouse", "studio", "plot", "unknown"],
+        },
+        "rooms": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "label": {"type": "STRING"},
+                    "category": {
+                        "type": "STRING",
+                        "enum": [
+                            "bedroom",
+                            "bathroom",
+                            "living_room",
+                            "kitchen",
+                            "dining_room",
+                            "balcony",
+                            "parking",
+                            "utility",
+                            "hallway",
+                            "other",
+                        ],
+                    },
+                    "dimensions": {"type": "STRING", "nullable": True},
+                    "area_sqft": {"type": "NUMBER", "nullable": True},
+                    "confidence": {"type": "NUMBER"},
+                },
+                "required": ["label", "category", "dimensions", "area_sqft", "confidence"],
+            },
+        },
+        "warnings": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "confidence": {"type": "NUMBER"},
+    },
+    "required": [
+        "usable",
+        "summary",
+        "total_area_sqft",
+        "area_source",
+        "bedrooms",
+        "bathrooms",
+        "balconies",
+        "parking_spaces",
+        "property_type",
+        "rooms",
+        "warnings",
+        "confidence",
+    ],
+}
+
+
 def validated_project_id(project_id: str) -> str:
     if not project_id_pattern.fullmatch(project_id):
         raise HTTPException(status_code=400, detail="Invalid project identifier")
@@ -145,6 +255,29 @@ def initialise_database() -> None:
             ON spacemap_predictions (project_id, created_at DESC)
             """
         )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS spaceworth_plan_analyses (
+                analysis_id UUID PRIMARY KEY,
+                query_id UUID,
+                project_id VARCHAR(128),
+                file_name VARCHAR(255) NOT NULL,
+                file_sha256 CHAR(64) NOT NULL,
+                mime_type VARCHAR(100) NOT NULL,
+                gemini_model VARCHAR(100) NOT NULL,
+                analysis JSONB NOT NULL,
+                prediction_request JSONB NOT NULL,
+                predicted_price_inr NUMERIC(16, 2) NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS spaceworth_plan_analyses_project_created_idx
+            ON spaceworth_plan_analyses (project_id, created_at DESC)
+            """
+        )
 
 
 def database_is_ready() -> bool:
@@ -169,6 +302,52 @@ def save_prediction(query_id: str, project_id: str | None, request: PropertyInpu
             VALUES (%s, %s, %s, %s)
             """,
             (query_id, safe_project_id, Jsonb(request.model_dump(mode="json")), price),
+        )
+
+
+def save_plan_analysis(
+    analysis_id: str,
+    query_id: str,
+    project_id: str | None,
+    file_name: str,
+    file_sha256: str,
+    mime_type: str,
+    analysis: FloorPlanAnalysis,
+    prediction_request: PropertyInput,
+    price: float,
+) -> None:
+    if not DATABASE_URL:
+        return
+    safe_project_id = validated_project_id(project_id) if project_id else None
+    with database_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO spaceworth_plan_analyses (
+                analysis_id,
+                query_id,
+                project_id,
+                file_name,
+                file_sha256,
+                mime_type,
+                gemini_model,
+                analysis,
+                prediction_request,
+                predicted_price_inr
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                analysis_id,
+                query_id,
+                safe_project_id,
+                file_name[:255],
+                file_sha256,
+                mime_type,
+                GEMINI_MODEL,
+                Jsonb(analysis.model_dump(mode="json")),
+                Jsonb(prediction_request.model_dump(mode="json")),
+                price,
+            ),
         )
 
 
@@ -207,6 +386,99 @@ def enforce_rate_limit(request: Request) -> None:
                 headers={"Retry-After": str(retry_after)},
             )
         timestamps.append(now)
+
+
+def enforce_plan_rate_limit(request: Request) -> None:
+    forwarded_for = request.headers.get("x-forwarded-for", "")
+    client_key = forwarded_for.split(",")[0].strip() or (request.client.host if request.client else "unknown")
+    now = time.monotonic()
+    cutoff = now - RATE_LIMIT_WINDOW_SECONDS
+    with rate_limit_lock:
+        timestamps = plan_request_windows[client_key]
+        while timestamps and timestamps[0] <= cutoff:
+            timestamps.popleft()
+        if len(timestamps) >= PLAN_RATE_LIMIT_REQUESTS:
+            retry_after = max(1, int(RATE_LIMIT_WINDOW_SECONDS - (now - timestamps[0])))
+            raise HTTPException(
+                status_code=429,
+                detail="CAD analysis rate limit reached. Try again shortly.",
+                headers={"Retry-After": str(retry_after)},
+            )
+        timestamps.append(now)
+
+
+def effective_property_from_analysis(property_input: PropertyInput, analysis: FloorPlanAnalysis) -> PropertyInput:
+    updates: dict[str, object] = {}
+    if analysis.total_area_sqft is not None:
+        updates["area_sqft"] = analysis.total_area_sqft
+    if analysis.bedrooms is not None and analysis.bedrooms > 0:
+        updates["bedrooms"] = analysis.bedrooms
+    if analysis.bathrooms is not None and analysis.bathrooms > 0:
+        updates["bathroom"] = analysis.bathrooms
+    if analysis.balconies is not None:
+        updates["balcony"] = analysis.balconies
+    if analysis.parking_spaces is not None:
+        updates["car_parking"] = analysis.parking_spaces
+    if analysis.property_type != "unknown":
+        updates["property_type"] = analysis.property_type
+    return property_input.model_copy(update=updates)
+
+
+async def analyse_floor_plan_with_gemini(file_bytes: bytes, mime_type: str) -> FloorPlanAnalysis:
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=503, detail="CAD image intelligence is not configured")
+
+    prompt = """
+You are an architectural floor-plan reader for an Indian property valuation application.
+Inspect only what is visibly supported by the uploaded CAD drawing, blueprint, floor plan, or PDF.
+Count bedrooms, bathrooms, balconies, parking spaces, and all recognizable rooms.
+Read printed dimensions and printed total area carefully. Set total_area_sqft only when a total area is printed or when visible dimensions allow a defensible calculation. Never infer real square footage from pixel size.
+Use null for unknown numeric values. Mark unusable files honestly. Keep warnings short and specific.
+Room confidence and overall confidence must reflect visual evidence, not optimism.
+Return only JSON matching the required schema.
+""".strip()
+    request_body = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt},
+                    {
+                        "inlineData": {
+                            "mimeType": mime_type,
+                            "data": base64.b64encode(file_bytes).decode("ascii"),
+                        }
+                    },
+                ]
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": 4096,
+            "responseMimeType": "application/json",
+            "responseSchema": floor_plan_response_schema,
+        },
+    }
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(90.0, connect=15.0)) as client:
+            response = await client.post(
+                url,
+                headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"},
+                json=request_body,
+            )
+    except httpx.HTTPError as error:
+        raise HTTPException(status_code=502, detail="The CAD intelligence provider could not be reached") from error
+
+    if response.status_code == 429:
+        raise HTTPException(status_code=429, detail="The CAD intelligence quota is temporarily exhausted")
+    if response.status_code >= 400:
+        raise HTTPException(status_code=502, detail="The CAD intelligence provider rejected the analysis request")
+    try:
+        response_payload = response.json()
+        response_text = response_payload["candidates"][0]["content"]["parts"][0]["text"]
+        return FloorPlanAnalysis.model_validate(json.loads(response_text))
+    except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as error:
+        raise HTTPException(status_code=502, detail="The CAD intelligence provider returned invalid structured data") from error
 
 
 class HousePriceService:
@@ -332,7 +604,7 @@ class HousePriceService:
 
 service = HousePriceService(MODEL_PATH)
 initialise_database()
-app = FastAPI(title="ITI House Price API", version="1.0.0")
+app = FastAPI(title="SpaceWorth Property Intelligence API", version="2.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -349,6 +621,8 @@ def health() -> dict[str, object]:
         "model": "FullRefitHighAccuracyTreeAndNeuralEnsemble",
         "held_out_r2": 0.906449314077493,
         "database": "connected" if database_is_ready() else "disconnected",
+        "cad_analysis": "configured" if GEMINI_API_KEY else "not_configured",
+        "vision_model": GEMINI_MODEL if GEMINI_API_KEY else None,
     }
 
 
@@ -432,3 +706,58 @@ def predict(
     price = round(service.predict(request), 2)
     save_prediction(query_id, x_project_id, request, price)
     return {"query_id": query_id, "predicted_price_inr": price}
+
+
+@app.post(
+    "/analyze",
+    dependencies=[Depends(verify_api_key), Depends(enforce_plan_rate_limit)],
+)
+async def analyze_floor_plan(
+    file: UploadFile = File(...),
+    property: str = Form(...),
+    project_id: str | None = Form(default=None),
+) -> dict[str, object]:
+    mime_type = (file.content_type or "").lower()
+    if mime_type not in allowed_plan_types:
+        raise HTTPException(status_code=415, detail="Use a PNG, JPG, WEBP, or PDF floor plan")
+    file_bytes = await file.read(MAX_PLAN_FILE_BYTES + 1)
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="The uploaded floor plan is empty")
+    if len(file_bytes) > MAX_PLAN_FILE_BYTES:
+        raise HTTPException(status_code=413, detail=f"The floor plan must be {MAX_PLAN_FILE_BYTES // 1024 // 1024} MB or smaller")
+    try:
+        property_input = PropertyInput.model_validate_json(property)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail="The property context is invalid") from error
+
+    analysis = await analyse_floor_plan_with_gemini(file_bytes, mime_type)
+    if not analysis.usable:
+        raise HTTPException(
+            status_code=422,
+            detail=analysis.warnings[0] if analysis.warnings else "The uploaded file is not a readable floor plan",
+        )
+
+    prediction_request = effective_property_from_analysis(property_input, analysis)
+    predicted_price = round(service.predict(prediction_request), 2)
+    query_id = str(uuid4())
+    analysis_id = str(uuid4())
+    save_prediction(query_id, project_id, prediction_request, predicted_price)
+    save_plan_analysis(
+        analysis_id=analysis_id,
+        query_id=query_id,
+        project_id=project_id,
+        file_name=file.filename or "floor-plan",
+        file_sha256=hashlib.sha256(file_bytes).hexdigest(),
+        mime_type=mime_type,
+        analysis=analysis,
+        prediction_request=prediction_request,
+        price=predicted_price,
+    )
+    return {
+        "analysis_id": analysis_id,
+        "query_id": query_id,
+        "vision_model": GEMINI_MODEL,
+        "analysis": analysis.model_dump(mode="json"),
+        "prediction_request": prediction_request.model_dump(mode="json"),
+        "predicted_price_inr": predicted_price,
+    }
