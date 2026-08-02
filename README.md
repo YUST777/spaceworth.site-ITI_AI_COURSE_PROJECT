@@ -2,9 +2,9 @@
 
 # SpaceWorth — Production Property Intelligence & Valuation Engine
 
-> **From a 79.59% Baseline to a Live 90.64% Held-out R² Machine Learning Product**
+> **An ITI AI Engineering Capstone Project**
 > 
-> *Full-stack property valuation platform built for the ITI Machine Learning Engineering Capstone. Combines a 57,058-listing tabular ensemble (LightGBM + CatBoost + PyTorch Entity Embeddings), multimodal CAD floor-plan vision (Gemini 3.5 Flash), FastAPI backend, PostgreSQL database, and a React + TypeScript interactive workspace.*
+> *Estimate Indian real estate prices instantly using our custom-trained 90.64% R² Machine Learning ensemble (LightGBM + CatBoost + 3x PyTorch Entity Embeddings), multimodal CAD floor-plan vision, FastAPI backend, and an interactive React workspace.*
 
 ---
 
