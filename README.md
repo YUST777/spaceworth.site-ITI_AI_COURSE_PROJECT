@@ -47,30 +47,31 @@ The dataset contained 187,531 raw rows across 21 columns. After deduplicating, p
 
 ## 🏗️ System Architecture
 
-```
-                  ┌───────────────────────────────────────────────────┐
-                  │                 React 18 + Vite                   │
-                  │   - Interactive Konva 2D/3D Floor Plan Canvas     │
-                  │   - Real-time Valuation Request Builder           │
-                  │   - API Keys Management & Live Status           │
-                  └─────────────────────────┬─────────────────────────┘
-                                            │ HTTP / JSON
-                                            ▼
-                  ┌───────────────────────────────────────────────────┐
-                  │            Railway FastAPI Backend                │
-                  │   - Model Lifespan Inference Engine               │
-                  │   - CAD Vision Intelligence (Gemini 3.5 Flash)    │
-                  │   - API Key Authentication & Rate Limiting        │
-                  └──────────────┬────────────────────┬───────────────┘
-                                 │                    │
-                   PostgreSQL    │                    │ Model Weights
-                                 ▼                    ▼
-                  ┌────────────────────┐   ┌──────────────────────────┐
-                  │  Supabase Database │   │   Hugging Face Models    │
-                  │ - Project Storage  │   │  55 MiB Blended Model    │
-                  │ - Predictions Log  │   │  (LightGBM+CatBoost+NN)  │
-                  │ - API Keys Table   │   └──────────────────────────┘
-                  └────────────────────┘
+```mermaid
+flowchart TD
+    subgraph Client["Client Tier (Frontend React + Vite)"]
+        UI["React 18 + TypeScript UI"]
+        Konva["Interactive 2D/3D Konva Canvas"]
+        Portal["Developer Portal & API Keys Manager"]
+    end
+
+    subgraph Service["Inference Tier (FastAPI Engine)"]
+        API["FastAPI App (Railway / Docker Container)"]
+        CAD["CAD Vision Intelligence (Gemini 3.5 Flash)"]
+        Auth["API Key Auth & Rate Limiter"]
+    end
+
+    subgraph Persistence["Storage & Artifacts Tier"]
+        DB[(Supabase PostgreSQL Database)]
+        HF["Hugging Face (55 MiB Ensemble Weights)"]
+    end
+
+    UI -->|"POST /predict"| API
+    UI -->|"POST /analyze"| API
+    Portal -->|"CRUD /api-keys"| API
+    API -->|"Multimodal Floorplan OCR"| CAD
+    API -->|"Persist Projects, History & Keys"| DB
+    API -->|"Fetch Model Weights at Startup"| HF
 ```
 
 ---
@@ -93,26 +94,39 @@ Full API key lifecycle management (creation, list, toggle enable/disable, perman
 
 ## 🚀 Quickstart & Installation
 
-### Prerequisites
+### Option A — One-Command Docker Setup (Recommended)
 
+Run both the FastAPI backend and React frontend together with Docker Compose:
+
+```bash
+# Clone repository
+git clone https://github.com/YUST777/iti_ai_project.git
+cd iti_ai_project
+
+# Spin up full-stack environment with Docker Compose
+docker compose up --build
+```
+
+- **React Frontend**: `http://localhost:5173`
+- **FastAPI Backend & Swagger**: `http://localhost:7860/docs`
+
+---
+
+### Option B — Manual Local Setup
+
+#### Prerequisites
 - **Python**: 3.11+
 - **Node.js**: 18+ & `npm`
 - **Git**
 
----
-
-### 1. Dataset Setup
-
+#### 1. Dataset Setup
 Download the Kaggle dataset:
 - **Dataset Link**: [House Price by Juhi Bhojani (Kaggle)](https://www.kaggle.com/datasets/juhibhojani/house-price)
 - Extract `house_prices.csv` into `notebooks/data/house_prices.csv`.
 
 *(Note: Raw CSV files are excluded from Git via `.gitignore` per assignment rules).*
 
----
-
-### 2. Backend Setup (FastAPI)
-
+#### 2. Backend Setup (FastAPI)
 ```bash
 # Navigate to backend directory
 cd deployment/house-price-space
@@ -131,12 +145,7 @@ python download_model.py
 uvicorn app:app --host 0.0.0.0 --port 7860 --reload
 ```
 
-Backend will be available at `http://localhost:7860`. Interactive Swagger docs at `http://localhost:7860/docs`.
-
----
-
-### 3. Frontend Setup (React + TypeScript + Vite)
-
+#### 3. Frontend Setup (React + TypeScript + Vite)
 ```bash
 # Navigate to frontend directory
 cd frontend
