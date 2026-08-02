@@ -742,6 +742,26 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   }
 }
 
+@media (max-width: 480px) {
+  .developer-modal {
+    max-height: calc(100dvh - 32px) !important;
+    overflow-y: auto !important;
+  }
+  .secret-key-display {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+  }
+  .secret-key-display code {
+    word-break: break-all !important;
+  }
+  .developer-endpoint-list article {
+    grid-template-columns: 40px minmax(0, 1fr) 24px !important;
+    gap: 8px !important;
+    padding: 8px 10px !important;
+  }
+}
+
 /* Developer API Keys Table */
 .developer-keys-section { display: flex; flex-direction: column; gap: 16px; height: 100%; overflow: auto; }
 .create-key-btn { display: inline-flex; align-items: center; gap: 6px; padding: 0 14px; min-height: 34px; font-size: 8.5px; border-radius: 7px; font-weight: 750; }
