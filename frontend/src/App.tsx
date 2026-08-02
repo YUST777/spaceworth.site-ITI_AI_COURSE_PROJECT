@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Circle, Group, Layer, Line, Rect, Stage, Text } from "react-konva";
+import { driver, type Driver } from "driver.js";
+import "driver.js/dist/driver.css";
 import {
   Box,
+  ChevronDown,
+  ChevronUp,
   Database,
   DoorOpen,
   ExternalLink,
@@ -114,6 +118,7 @@ const API_URL = (
 const PLAN_API_URL = (import.meta.env.VITE_PLAN_ANALYSIS_API_URL ?? "").replace(/\/$/, "");
 const STORAGE_KEY = "spacemap-project-v2";
 const PROJECT_ID_KEY = "spacemap-project-id-v1";
+const WELCOME_TOUR_KEY = "spacemap-welcome-tour-v1";
 const PREDICTION_COOLDOWN_MS = 1800;
 
 const NUMERIC_LIMITS = {
@@ -524,11 +529,13 @@ function App() {
   const [uploadedPlan, setUploadedPlan] = useState<UploadedPlan | null>(null);
   const [uploadAnalysis, setUploadAnalysis] = useState<UploadAnalysisState>({ status: "idle" });
   const [draggingPlan, setDraggingPlan] = useState(false);
+  const [mobileDetailsCollapsed, setMobileDetailsCollapsed] = useState(() => window.innerWidth <= 560);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const initialPlanCheck = useRef(true);
   const lastPredictionRequestAt = useRef(0);
   const roomHistory = useRef<PlanRoom[][]>([]);
   const roomFuture = useRef<PlanRoom[][]>([]);
+  const welcomeTour = useRef<Driver | null>(null);
   const [historyVersion, setHistoryVersion] = useState(0);
 
   const { form, rooms, prediction } = project;
@@ -592,6 +599,77 @@ function App() {
     setZoom(1);
   };
 
+  const startWelcomeTour = () => {
+    welcomeTour.current?.destroy();
+    setSection("plan");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    window.setTimeout(() => {
+      const tour = driver({
+        animate: true,
+        smoothScroll: true,
+        allowClose: false,
+        allowKeyboardControl: false,
+        overlayClickBehavior: () => undefined,
+        disableActiveInteraction: true,
+        stagePadding: 8,
+        stageRadius: 14,
+        popoverClass: "spacemap-tour",
+        showProgress: true,
+        progressText: "Step {{current}} of {{total}}",
+        showButtons: ["previous", "next"],
+        nextBtnText: "Next",
+        prevBtnText: "Back",
+        doneBtnText: "Start exploring",
+        steps: [
+          {
+            element: ".tour-welcome",
+            popover: {
+              title: "Welcome to SpaceMap",
+              description: "Build a property profile, shape the editable floor plan, and keep every project synchronized automatically.",
+              side: "bottom",
+              align: "center",
+            },
+          },
+          {
+            element: ".tour-main-ai",
+            popover: {
+              title: "Real price prediction",
+              description: "Complete the property details, then run the validated model to receive the live estimated value and price per square foot.",
+              side: "left",
+              align: "center",
+              onNextClick: (_element, _step, options) => {
+                setSection("upload");
+                window.setTimeout(() => options.driver.moveNext(), 180);
+              },
+            },
+          },
+          {
+            element: ".tour-cad-ai",
+            waitForElement: 1200,
+            popover: {
+              title: "CAD image intelligence",
+              description: "Upload a real CAD, blueprint, PDF, or floor-plan image here. The vision workflow keeps the file and property context together for analysis.",
+              side: "right",
+              align: "start",
+              onPrevClick: (_element, _step, options) => {
+                setSection("plan");
+                window.setTimeout(() => options.driver.movePrevious(), 180);
+              },
+            },
+          },
+        ],
+        onDoneClick: (_element, _step, options) => {
+          localStorage.setItem(WELCOME_TOUR_KEY, "complete");
+          options.driver.destroy();
+          setSection("plan");
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        },
+      });
+      welcomeTour.current = tour;
+      tour.drive();
+    }, 160);
+  };
+
   const acceptPlanFile = (file: File) => {
     const allowedTypes = ["image/png", "image/jpeg", "image/webp", "application/pdf"];
     if (!allowedTypes.includes(file.type)) {
@@ -644,6 +722,15 @@ function App() {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
   }, [project]);
+
+  useEffect(() => {
+    if (localStorage.getItem(WELCOME_TOUR_KEY) === "complete") return;
+    const timer = window.setTimeout(startWelcomeTour, 900);
+    return () => {
+      window.clearTimeout(timer);
+      welcomeTour.current?.destroy();
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -944,6 +1031,13 @@ function App() {
               </div>
               <span className={`connection-badge ${databaseSync === "synced" ? "online" : ""}`}>{databaseSync}</span>
             </article>
+            <article>
+              <div>
+                <strong>Welcome walkthrough</strong>
+                <span>Replay the three-step guide for the workspace and both AI flows.</span>
+              </div>
+              <Button variant="outline" className="tour-replay-button" onClick={startWelcomeTour}><RotateCcw /> Replay tour</Button>
+            </article>
           </div>
         </div>
       );
@@ -1009,14 +1103,14 @@ function App() {
 
   return (
     <main className="app-shell">
-      <Card className="topbar card">
+      <Card className="topbar card tour-welcome">
         <div className="brand">
           <img src="/favicon.svg" alt="" />
           <span>SpaceMap</span>
         </div>
       </Card>
 
-      <div className="workspace">
+      <div className="workspace tour-workspace">
         <nav className="rail card" aria-label="Primary navigation">
           <Tooltip>
             <TooltipTrigger render={<Button variant="ghost" size="icon" className={`rail-item ${section === "plan" ? "active" : ""}`} onClick={() => setSection("plan")} aria-label="Floor plan" />}>
@@ -1038,7 +1132,7 @@ function App() {
           </Tooltip>
         </nav>
 
-        <Card className={`details-panel card ${section === "upload" ? "upload-sidebar" : ""}`}>
+        <Card className={`details-panel card ${section === "upload" ? "upload-sidebar tour-cad-ai" : ""} ${section === "plan" && mobileDetailsCollapsed ? "mobile-collapsed" : ""}`}>
           {section === "upload" ? (
             <>
               <div className="panel-heading">
@@ -1071,7 +1165,13 @@ function App() {
             <>
               <div className="panel-heading">
                 <div><span className="eyebrow">Prediction inputs</span><h1>Property details</h1></div>
-                <span className="auto-badge"><Sparkles /> Auto plan</span>
+                <div className="panel-heading-actions">
+                  <span className="auto-badge"><Sparkles /> Auto plan</span>
+                  <Button variant="ghost" className="mobile-details-toggle" onClick={() => setMobileDetailsCollapsed((value) => !value)}>
+                    {mobileDetailsCollapsed ? <ChevronDown /> : <ChevronUp />}
+                    {mobileDetailsCollapsed ? "Show details" : "Hide details"}
+                  </Button>
+                </div>
               </div>
               <div className="details-form">
             <Field label="Area (sq ft)"><SafeNumberInput field="areaSqft" value={form.areaSqft} onChange={(value) => updateForm("areaSqft", value)} onBlur={normalizeCurrentForm} /></Field>
@@ -1147,7 +1247,7 @@ function App() {
             </dl>
           </Card>
 
-          <Card className={`prediction-card card ${prediction.status}`}>
+          <Card className={`prediction-card card tour-main-ai ${prediction.status}`}>
             <div className="prediction-heading">
               <div>
                 <span className="eyebrow">AI price prediction</span>

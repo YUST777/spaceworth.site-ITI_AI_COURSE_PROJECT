@@ -98,10 +98,12 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 
 .details-panel { display: flex; flex-direction: column; padding: 14px 14px 11px; overflow: hidden; }
 .panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding-bottom: 10px; border-bottom: 1px solid #eef0f2; }
+.panel-heading-actions { display: flex; align-items: center; gap: 6px; }
 .panel-heading h1, .canvas-header h2, .summary-card h2, .prediction-card h2, .functional-heading h2 { margin: 3px 0 0; font: 700 16px/1.2 Manrope, sans-serif; letter-spacing: -.5px; }
 .eyebrow { color: #858b94; font-size: 8px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
 .auto-badge { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; padding: 6px 8px; border-radius: 999px; color: #475264; background: #f3f5f7; font-size: 8px; font-weight: 700; }
 .auto-badge svg { width: 11px; height: 11px; }
+.mobile-details-toggle { display: none; }
 .details-form { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; align-content: start; gap: 4px 8px; padding-top: 8px; }
 .field { min-width: 0; display: flex; flex-direction: column; gap: 4px; color: #666c75; font-size: 9px; font-weight: 700; }
 .field [data-slot="label"] { font-size: 9px; line-height: 1; }
@@ -232,15 +234,34 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .three-room span { font-size: 9px; font-weight: 700; transform: rotateZ(29deg) rotateX(-45deg); white-space: nowrap; }
 .three-scene > p { position: absolute; bottom: 14px; margin: 0; color: #737984; font-size: 9px; }
 
-@media (min-width: 901px) {
+.spacemap-tour.driver-popover { width: min(350px, calc(100vw - 24px)); padding: 18px; border: 1px solid #e5e8ec; border-radius: 15px; box-shadow: 0 24px 70px rgba(20, 24, 31, .24); }
+.spacemap-tour .driver-popover-close-btn { display: none !important; }
+.spacemap-tour .driver-popover-title { font: 800 16px/1.25 Manrope, sans-serif; letter-spacing: -.45px; }
+.spacemap-tour .driver-popover-description { margin-top: 8px; color: #68707a; font-size: 11px; line-height: 1.55; }
+.spacemap-tour .driver-popover-footer { margin-top: 16px; }
+.spacemap-tour .driver-popover-progress-text { color: #858b94; font-size: 9px; font-weight: 700; }
+.spacemap-tour .driver-popover-navigation-btns { gap: 6px; }
+.spacemap-tour .driver-popover-prev-btn, .spacemap-tour .driver-popover-next-btn { min-height: 34px; padding: 0 13px; border: 0; border-radius: 8px; font-size: 10px; font-weight: 800; text-shadow: none; }
+.spacemap-tour .driver-popover-prev-btn { color: #454b54; background: #eef0f2; }
+.spacemap-tour .driver-popover-next-btn { color: #fff; background: #191c21; }
+.tour-replay-button { flex: 0 0 auto; gap: 6px; font-size: 9px; }
+.tour-replay-button svg { width: 13px; height: 13px; }
+
+@media (min-width: 1251px) {
   html, body, #root { width: 100%; height: 100%; overflow: hidden; }
   body { overscroll-behavior: none; }
   .app-shell { width: 111.111vw; height: 111.111vh; transform: scale(.9); transform-origin: top left; }
 }
 
-@media (max-width: 1180px) and (min-width: 901px) {
-  .workspace { grid-template-columns: 50px minmax(280px, 306px) minmax(390px, 1fr) 240px; gap: 10px; }
-  .app-shell { padding: 12px 14px 14px; }
+@media (max-width: 1250px) and (min-width: 901px) {
+  html, body, #root { min-height: 100%; overflow-x: hidden; }
+  .app-shell { min-height: 100vh; padding: 12px; }
+  .topbar { position: sticky; z-index: 45; top: 10px; }
+  .workspace { grid-template-columns: 52px minmax(280px, 320px) minmax(430px, 1fr); gap: 10px; align-items: start; }
+  .rail { position: sticky; top: 80px; height: calc(100vh - 94px); }
+  .details-panel, .canvas-panel { height: calc(100vh - 94px); min-height: 620px; }
+  .summary-column { grid-column: 2 / -1; height: auto; display: grid; grid-template-columns: minmax(250px, .8fr) minmax(360px, 1.2fr); overflow: visible; }
+  .prediction-card { min-height: 245px; }
 }
 
 @media (max-width: 900px) {
@@ -255,11 +276,16 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   .details-form { flex: initial; }
   .canvas-panel { min-height: 610px; }
   .drawing-area { min-height: 530px; }
-  .summary-column { overflow: visible; padding-bottom: 60px; }
+  .summary-column { display: grid; grid-template-columns: minmax(220px, .8fr) minmax(320px, 1.2fr); overflow: visible; padding-bottom: 66px; }
   .prediction-card { min-height: 285px; }
   .settings-panel { min-height: 520px; }
   .upload-dropzone { flex-basis: 250px; }
   .upload-preview-panel { min-height: 600px; }
+}
+
+@media (max-width: 680px) {
+  .summary-column { display: flex; flex-direction: column; }
+  .prediction-card { min-height: 270px; }
 }
 
 @media (max-width: 560px) {
@@ -269,6 +295,12 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   .brand img { width: 22px; height: 24px; }
   .api-pill { padding: 7px 9px; font-size: 8px; }
   .details-panel { padding: 14px 12px 12px; }
+  .panel-heading-actions { flex-direction: column; align-items: flex-end; }
+  .mobile-details-toggle { min-height: 30px; display: inline-flex; gap: 5px; padding: 0 8px; border: 1px solid #e7e9ec; border-radius: 8px; color: #525a65; background: #f7f8f9; font-size: 9px; font-weight: 800; }
+  .mobile-details-toggle svg { width: 12px; height: 12px; }
+  .details-panel.mobile-collapsed { padding-bottom: 14px; }
+  .details-panel.mobile-collapsed .panel-heading { padding-bottom: 0; border-bottom: 0; }
+  .details-panel.mobile-collapsed .details-form { display: none; }
   .details-form { grid-template-columns: 1fr; gap: 9px; }
   .wide-field { grid-column: auto; }
   .field [data-slot="input"], .field [data-slot="select-trigger"] { height: 38px; min-height: 38px; font-size: 12px; }
@@ -287,11 +319,15 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   .zoom-controls { bottom: 11px; }
   .summary-card, .prediction-card { padding: 15px 13px; }
   .settings-stack article { align-items: flex-start; flex-direction: column; }
+  .tour-replay-button { width: 100%; min-height: 38px; }
   .upload-dropzone { flex-basis: 235px; }
   .map-overlay { padding: 8px; }
   .map-dialog { width: 100%; height: min(690px, 90vh); }
   .map-dialog footer { align-items: stretch; flex-direction: column; }
   .map-dialog footer button { width: 100%; }
+  .spacemap-tour.driver-popover { padding: 15px; border-radius: 13px; }
+  .spacemap-tour .driver-popover-title { font-size: 14px; }
+  .spacemap-tour .driver-popover-description { font-size: 10px; }
 }
 
 @theme inline {
