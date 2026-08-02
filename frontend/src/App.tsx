@@ -17,6 +17,7 @@ import {
   ExternalLink,
   Expand,
   FileImage,
+  Globe,
   Code2,
   Layers3,
   Map as MapIcon,
@@ -1673,7 +1674,35 @@ function App() {
           <a href={SECTION_PATHS.proof} aria-current={section === "proof" ? "page" : undefined} className={section === "proof" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("proof"); }}>Proof</a>
           <a href={SECTION_PATHS.developers} aria-current={section === "developers" ? "page" : undefined} className={section === "developers" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("developers"); }}>Developers</a>
         </nav>
-        <div className="topbar-balance" aria-hidden="true" />
+        <div className="made-by-wrapper">
+          <button type="button" className="made-by-trigger" aria-label="Developer links">
+            <span>Made by <strong>Yousef</strong></span>
+            <ChevronDown />
+          </button>
+          <div className="made-by-dropdown card">
+            <a href="https://github.com/YUST777" target="_blank" rel="noreferrer" className="social-link">
+              <div className="social-link-label">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>
+                <span>GitHub</span>
+              </div>
+              <ExternalLink />
+            </a>
+            <a href="https://www.linkedin.com/in/yousefmsm1/" target="_blank" rel="noreferrer" className="social-link">
+              <div className="social-link-label">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z"/><rect width="4" height="12" x="2" y="9"/><circle cx="4" cy="4" r="2"/></svg>
+                <span>LinkedIn</span>
+              </div>
+              <ExternalLink />
+            </a>
+            <a href="https://www.yust.dev/" target="_blank" rel="noreferrer" className="social-link">
+              <div className="social-link-label">
+                <Globe />
+                <span>Portfolio</span>
+              </div>
+              <ExternalLink />
+            </a>
+          </div>
+        </div>
       </Card>
 
       <div
@@ -2118,6 +2147,16 @@ function App() {
               </div>
               <Box />
             </div>
+            {prediction.status === "success" && (
+              <div className="hero-price-box">
+                <span className="hero-price-eyebrow">Estimated Valuation</span>
+                <div className="hero-price-amount">{formatCurrency(prediction.price)}</div>
+                {pricePerSqft && (
+                  <div className="hero-price-per-sqft">{formatCurrency(pricePerSqft)} / sq ft</div>
+                )}
+              </div>
+            )}
+
             <ol className="prediction-steps">
               <li className="complete">
                 <span>1</span>
@@ -2132,20 +2171,12 @@ function App() {
               <li className={prediction.status === "success" ? "complete" : ""}>
                 <span>3</span>
                 <div>
-                  <strong>{prediction.status === "success" ? formatCurrency(prediction.price) : "Receive AI response"}</strong>
-                  <small>{prediction.status === "success" && pricePerSqft ? `${formatCurrency(pricePerSqft)} per sq ft` : "Server price and query identifier appear here"}</small>
+                  <strong>{prediction.status === "success" ? "Valuation complete" : "Receive AI response"}</strong>
+                  <small>{prediction.status === "success" ? "90.64% R² ensemble prediction generated" : "Server price response appears here"}</small>
                 </div>
                 {prediction.status === "success" ? <BadgeCheck /> : <CircleDot />}
               </li>
             </ol>
-
-            {prediction.status === "success" && (
-              <div className="prediction-query-id">
-                <span>{prediction.queryIdSource === "server" ? "Server query ID" : "Trace ID"}</span>
-                <code>{prediction.queryId}</code>
-                {prediction.queryIdSource === "client" && <small>Railway is still deploying server-issued IDs.</small>}
-              </div>
-            )}
 
             <div className="prediction-json-grid">
               <article>

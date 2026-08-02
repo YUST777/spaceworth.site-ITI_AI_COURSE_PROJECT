@@ -833,6 +833,151 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .secret-key-display button { height: 28px; padding: 0 10px; font-size: 7.5px; background: #2d343f; color: #fff; border-color: #4b5563; }
 .secret-key-display button:hover { background: #374151; }
 
+/* Made by Yousef Hover Dropdown */
+.made-by-wrapper {
+  position: relative;
+  justify-self: end;
+  display: flex;
+  align-items: center;
+}
+.made-by-trigger {
+  min-height: 31px;
+  padding: 0 12px;
+  border: 1px solid #e2e6ea;
+  border-radius: 8px;
+  background: #fff;
+  color: #4b525d;
+  font-size: 9px;
+  font-weight: 750;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  transition: all .16s ease;
+}
+.made-by-trigger:hover,
+.made-by-wrapper:hover .made-by-trigger {
+  border-color: #09090b;
+  color: #09090b;
+  background: #fafbfb;
+}
+.made-by-trigger strong {
+  color: #09090b;
+  font-weight: 850;
+}
+.made-by-trigger svg {
+  width: 12px;
+  height: 12px;
+  color: #858d96;
+  transition: transform .18s ease;
+}
+.made-by-wrapper:hover .made-by-trigger svg {
+  transform: rotate(180deg);
+  color: #09090b;
+}
+
+/* Dropdown Menu - Sleek Dark Theme */
+.made-by-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 100;
+  width: 190px;
+  padding: 6px;
+  background: #09090b;
+  border: 1px solid #27272a;
+  border-radius: 13px;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-4px);
+  transition: opacity .18s ease, transform .18s ease, visibility .18s ease;
+  pointer-events: none;
+}
+.made-by-wrapper:hover .made-by-dropdown,
+.made-by-wrapper:focus-within .made-by-dropdown {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+.social-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 9px;
+  color: #e4e4e7;
+  text-decoration: none;
+  font-size: 9px;
+  font-weight: 750;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  transition: background .14s ease, color .14s ease;
+}
+.social-link:hover {
+  background: #27272a;
+  color: #ffffff;
+}
+.social-link-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.social-link-label svg {
+  width: 14px;
+  height: 14px;
+  color: #a1a1aa;
+}
+.social-link:hover .social-link-label svg {
+  color: #ffffff;
+}
+.social-link > svg {
+  width: 11px;
+  height: 11px;
+  color: #71717a;
+  transition: transform .14s ease, color .14s ease;
+}
+.social-link:hover > svg {
+  color: #ffffff;
+  transform: translate(1px, -1px);
+}
+
+/* Massive Hero Price Display Box */
+.hero-price-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px;
+  margin-top: 10px;
+  margin-bottom: 12px;
+  border: 1px solid #18181b;
+  border-radius: 12px;
+  background: #09090b;
+  color: #fff;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+}
+.hero-price-eyebrow {
+  color: #a1a1aa;
+  font-size: 7.5px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.hero-price-amount {
+  color: #ffffff;
+  font: 850 26px/1.05 Manrope, sans-serif;
+  letter-spacing: -0.9px;
+}
+.hero-price-per-sqft {
+  color: #34d399;
+  font-size: 11.5px;
+  font-weight: 800;
+  margin-top: 2px;
+}
+
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: 'Geist Variable', sans-serif;
