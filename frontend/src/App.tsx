@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Circle, Group, Layer, Line, Rect, Stage, Text } from "react-konva";
 import { driver, type Driver } from "driver.js";
+import { AnimatePresence, motion } from "framer-motion";
+import L, { type Map as LeafletMap, type Marker as LeafletMarker } from "leaflet";
 import "driver.js/dist/driver.css";
+import "leaflet/dist/leaflet.css";
 import {
   Box,
   BadgeCheck,
@@ -16,12 +19,15 @@ import {
   FileImage,
   Code2,
   Layers3,
+  Map as MapIcon,
   MapPin,
   MapPinned,
   MousePointer2,
   RefreshCw,
   RotateCcw,
+  Search,
   Settings,
+  SlidersHorizontal,
   Sparkles,
   Server,
   Trash2,
@@ -98,6 +104,15 @@ type ProjectState = {
   form: PropertyForm;
   rooms: PlanRoom[];
   prediction: PredictionState;
+  updatedAt: number;
+};
+
+type MapSelection = {
+  lat: number;
+  lng: number;
+  location: string;
+  locality: string;
+  displayName: string;
 };
 
 type UploadedPlan = {
@@ -117,6 +132,7 @@ type UploadAnalysisState =
 type Section = "plan" | "upload" | "proof" | "settings";
 type CanvasMode = "2d" | "3d";
 type Tool = "select" | "door" | "room" | "label" | "plant" | "delete";
+type MobilePanel = "canvas" | "details" | "result";
 type DatabaseSyncState = "loading" | "syncing" | "synced" | "offline";
 type LiveProofState =
   | { status: "idle" }
@@ -326,22 +342,189 @@ function loadProject(): ProjectState {
     form: initialForm,
     rooms: buildPlan(2, 2, 1200),
     prediction: { status: "idle" },
+    updatedAt: 0,
   };
 
   try {
     const saved = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem("spacemap-project-v1");
     if (!saved) return fallback;
-    const parsed = JSON.parse(saved) as ProjectState | Array<{ form?: Partial<PropertyForm>; rooms?: PlanRoom[]; prediction?: PredictionState }>;
+    const parsed = JSON.parse(saved) as ProjectState | Array<{ form?: Partial<PropertyForm>; rooms?: PlanRoom[]; prediction?: PredictionState; updatedAt?: number }>;
     const project = Array.isArray(parsed) ? parsed[0] : parsed;
     if (!project) return fallback;
     return {
       form: normalizeForm({ ...initialForm, ...project.form }),
-      rooms: Array.isArray(project.rooms) && project.rooms.length ? project.rooms : fallback.rooms,
+      rooms: Array.isArray(project.rooms) ? project.rooms : fallback.rooms,
       prediction: project.prediction ?? { status: "idle" },
+      updatedAt: typeof project.updatedAt === "number" ? project.updatedAt : Date.now(),
     };
   } catch {
     return fallback;
   }
+}
+
+function LocationPickerMap({
+  query,
+  onUse,
+}: {
+  query: string;
+  onUse: (selection: MapSelection) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<LeafletMap | null>(null);
+  const markerRef = useRef<LeafletMarker | null>(null);
+  const requestIdRef = useRef(0);
+  const [searchValue, setSearchValue] = useState(query);
+  const [selection, setSelection] = useState<MapSelection | null>(null);
+  const [status, setStatus] = useState("Search or click anywhere on the map.");
+  const [searching, setSearching] = useState(false);
+
+  const fetchGeoJson = async <T,>(url: string) => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      if (!response.ok) throw new Error("The location service is unavailable.");
+      return (await response.json()) as T;
+    } finally {
+      window.clearTimeout(timer);
+    }
+  };
+
+  const placeMarker = (lat: number, lng: number) => {
+    const map = mapRef.current;
+    if (!map) return;
+    const icon = L.divIcon({
+      className: "location-marker-shell",
+      html: '<span class="location-marker-dot"></span>',
+      iconSize: [34, 42],
+      iconAnchor: [17, 40],
+    });
+    if (markerRef.current) markerRef.current.setLatLng([lat, lng]);
+    else markerRef.current = L.marker([lat, lng], { icon }).addTo(map);
+  };
+
+  const reverseLookup = async (lat: number, lng: number) => {
+    const requestId = ++requestIdRef.current;
+    setSearching(true);
+    setStatus("Reading the selected address…");
+    placeMarker(lat, lng);
+    try {
+      const result = await fetchGeoJson<{
+        features?: Array<{
+          properties?: Record<string, string>;
+        }>;
+      }>(`https://photon.komoot.io/reverse?lat=${lat}&lon=${lng}`);
+      const address = result.features?.[0]?.properties ?? {};
+      if (!result.features?.[0]) throw new Error("Address lookup failed.");
+      if (requestId !== requestIdRef.current) return;
+      const locality = address.street ?? address.name ?? address.district ?? address.locality ?? address.suburb ?? "Selected point";
+      const location = address.city ?? address.county ?? address.state ?? "India";
+      const addressParts = [address.name, address.street, address.district, address.city, address.state, address.country].filter(Boolean);
+      const nextSelection = {
+        lat,
+        lng,
+        locality,
+        location,
+        displayName: [...new Set(addressParts)].join(", ") || `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+      };
+      setSelection(nextSelection);
+      setSearchValue(nextSelection.displayName);
+      setStatus("Location selected. Use it to update the property form.");
+    } catch {
+      if (requestId !== requestIdRef.current) return;
+      const fallbackSelection = {
+        lat,
+        lng,
+        locality: `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+        location: "India",
+        displayName: `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+      };
+      setSelection(fallbackSelection);
+      setStatus("Pin selected. Address lookup is unavailable, so coordinates will be used.");
+    } finally {
+      if (requestId === requestIdRef.current) setSearching(false);
+    }
+  };
+
+  const searchLocation = async (value = searchValue) => {
+    const cleanValue = value.trim();
+    if (!cleanValue) return;
+    const requestId = ++requestIdRef.current;
+    setSearching(true);
+    setStatus("Finding that place in India…");
+    try {
+      const result = await fetchGeoJson<{
+        features?: Array<{
+          geometry?: { coordinates?: [number, number] };
+        }>;
+      }>(`https://photon.komoot.io/api/?limit=1&lang=en&q=${encodeURIComponent(cleanValue)}`);
+      const coordinates = result.features?.[0]?.geometry?.coordinates;
+      if (!coordinates) throw new Error("No matching place was found.");
+      if (requestId !== requestIdRef.current) return;
+      const [lng, lat] = coordinates;
+      mapRef.current?.flyTo([lat, lng], 16, { duration: 0.7 });
+      await reverseLookup(lat, lng);
+    } catch (error) {
+      if (requestId === requestIdRef.current) {
+        setStatus(error instanceof Error ? error.message : "Location search failed.");
+        setSearching(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || mapRef.current) return;
+    const map = L.map(container, { zoomControl: true, attributionControl: true }).setView([19.2183, 72.9781], 12);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: "&copy; OpenStreetMap contributors",
+    }).addTo(map);
+    map.on("click", (event) => {
+      map.flyTo(event.latlng, Math.max(map.getZoom(), 15), { duration: 0.45 });
+      void reverseLookup(event.latlng.lat, event.latlng.lng);
+    });
+    mapRef.current = map;
+    window.setTimeout(() => map.invalidateSize(), 80);
+    void searchLocation(query);
+    return () => {
+      requestIdRef.current += 1;
+      map.remove();
+      mapRef.current = null;
+      markerRef.current = null;
+    };
+  }, []);
+
+  return (
+    <>
+      <div className="map-search-bar">
+        <Search />
+        <input
+          value={searchValue}
+          onChange={(event) => setSearchValue(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              void searchLocation();
+            }
+          }}
+          aria-label="Search map location"
+        />
+        <Button type="button" className="dark-button" onClick={() => void searchLocation()} disabled={searching}>Search</Button>
+      </div>
+      <div className="interactive-map" ref={containerRef} aria-label="Interactive map of India" />
+      <footer className="map-picker-footer">
+        <div className="map-selection-copy">
+          <MapPinned />
+          <div><strong>{selection ? selection.displayName : "Choose a property location"}</strong><span>{status}</span></div>
+        </div>
+        <div className="map-footer-actions">
+          {selection && <Button variant="outline" onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${selection.lat},${selection.lng}`, "_blank", "noopener,noreferrer")}><ExternalLink /> Google Maps</Button>}
+          <Button className="dark-button" disabled={!selection || searching} onClick={() => selection && onUse(selection)}><MapPin /> Use this location</Button>
+        </div>
+      </footer>
+    </>
+  );
 }
 
 function useElementSize<T extends HTMLElement>() {
@@ -628,8 +811,10 @@ function App() {
   const [uploadAnalysis, setUploadAnalysis] = useState<UploadAnalysisState>({ status: "idle" });
   const [draggingPlan, setDraggingPlan] = useState(false);
   const [mobileDetailsCollapsed, setMobileDetailsCollapsed] = useState(() => window.innerWidth <= 560);
+  const [mobilePanel, setMobilePanel] = useState<MobilePanel>("canvas");
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const initialPlanCheck = useRef(true);
+  const projectRef = useRef(project);
+  const planInputSignature = useRef([project.form.areaSqft, project.form.bedrooms, project.form.bathrooms].join("|"));
   const lastPredictionRequestAt = useRef(0);
   const roomHistory = useRef<PlanRoom[][]>([]);
   const roomFuture = useRef<PlanRoom[][]>([]);
@@ -651,8 +836,20 @@ function App() {
     ? prediction.response
     : null;
   const mapQuery = [form.locality, form.location, "India"].filter(Boolean).join(", ");
-  const mapEmbedUrl = `https://www.google.com/maps?q=${encodeURIComponent(mapQuery)}&output=embed`;
-  const mapPageUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapQuery)}`;
+
+  const useMapSelection = (selection: MapSelection) => {
+    setProject((current) => ({
+      ...current,
+      form: {
+        ...current.form,
+        location: selection.location.toLowerCase(),
+        locality: selection.locality.toLowerCase(),
+      },
+      prediction: { status: "idle" },
+      updatedAt: Date.now(),
+    }));
+    setMapOpen(false);
+  };
 
   const navigateTo = (nextSection: Section, replace = false) => {
     const nextPath = SECTION_PATHS[nextSection];
@@ -660,6 +857,7 @@ function App() {
       window.history[replace ? "replaceState" : "pushState"]({}, "", nextPath);
     }
     setSection(nextSection);
+    setMobilePanel("canvas");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -675,6 +873,7 @@ function App() {
       ...current,
       form: { ...current.form, [key]: value },
       prediction: { status: "idle" },
+      updatedAt: Date.now(),
     }));
   };
 
@@ -683,13 +882,14 @@ function App() {
       ...current,
       form: normalizeForm(current.form),
       prediction: { status: "idle" },
+      updatedAt: Date.now(),
     }));
   };
 
   const updateRooms = (nextRooms: PlanRoom[]) => {
     roomHistory.current = [...roomHistory.current.slice(-29), rooms];
     roomFuture.current = [];
-    setProject((current) => ({ ...current, rooms: nextRooms }));
+    setProject((current) => ({ ...current, rooms: nextRooms, updatedAt: Date.now() }));
     setHistoryVersion((version) => version + 1);
   };
 
@@ -697,7 +897,7 @@ function App() {
     const previousRooms = roomHistory.current.pop();
     if (!previousRooms) return;
     roomFuture.current = [...roomFuture.current, rooms];
-    setProject((current) => ({ ...current, rooms: previousRooms }));
+    setProject((current) => ({ ...current, rooms: previousRooms, updatedAt: Date.now() }));
     setSelectedRoom(previousRooms[0]?.id ?? "");
     setHistoryVersion((version) => version + 1);
   };
@@ -706,7 +906,7 @@ function App() {
     const nextRooms = roomFuture.current.pop();
     if (!nextRooms) return;
     roomHistory.current = [...roomHistory.current, rooms];
-    setProject((current) => ({ ...current, rooms: nextRooms }));
+    setProject((current) => ({ ...current, rooms: nextRooms, updatedAt: Date.now() }));
     setSelectedRoom(nextRooms[0]?.id ?? "");
     setHistoryVersion((version) => version + 1);
   };
@@ -841,6 +1041,7 @@ function App() {
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
+    projectRef.current = project;
   }, [project]);
 
   useEffect(() => {
@@ -871,13 +1072,16 @@ function App() {
         }
         if (!response.ok) throw new Error("Could not load the saved project.");
         const result = (await response.json()) as { project?: ProjectState };
-        if (result.project && !cancelled) {
+        const remoteUpdatedAt = typeof result.project?.updatedAt === "number" ? result.project.updatedAt : 0;
+        const localUpdatedAt = projectRef.current.updatedAt;
+        if (result.project && !cancelled && (localUpdatedAt === 0 || remoteUpdatedAt > localUpdatedAt)) {
+          const remoteForm = normalizeForm({ ...initialForm, ...result.project.form });
+          planInputSignature.current = [remoteForm.areaSqft, remoteForm.bedrooms, remoteForm.bathrooms].join("|");
           setProject({
-            form: normalizeForm({ ...initialForm, ...result.project.form }),
-            rooms: Array.isArray(result.project.rooms) && result.project.rooms.length
-              ? result.project.rooms
-              : buildPlan(2, 2, 1200),
+            form: remoteForm,
+            rooms: Array.isArray(result.project.rooms) ? result.project.rooms : buildPlan(2, 2, 1200),
             prediction: result.project.prediction ?? { status: "idle" },
+            updatedAt: remoteUpdatedAt,
           });
         }
         if (!cancelled) {
@@ -928,15 +1132,14 @@ function App() {
   }, [databaseSync, remoteReady]);
 
   useEffect(() => {
-    if (initialPlanCheck.current) {
-      initialPlanCheck.current = false;
-      return;
-    }
+    const nextSignature = [form.areaSqft, form.bedrooms, form.bathrooms].join("|");
+    if (planInputSignature.current === nextSignature) return;
+    planInputSignature.current = nextSignature;
 
     const timer = window.setTimeout(() => {
       const safeForm = normalizeForm(form);
       const nextRooms = buildPlan(Number(safeForm.bedrooms), Number(safeForm.bathrooms), Number(safeForm.areaSqft));
-      setProject((current) => ({ ...current, rooms: nextRooms }));
+      setProject((current) => ({ ...current, rooms: nextRooms, updatedAt: Date.now() }));
       setSelectedRoom(nextRooms.find((room) => room.id === "living")?.id ?? nextRooms[0]?.id ?? "");
     }, 350);
 
@@ -1247,7 +1450,7 @@ function App() {
     <main className="app-shell">
       <Card className="topbar card tour-welcome">
         <div className="brand">
-          <img src="/favicon.svg" alt="" />
+          <img src="/logo.svg" alt="" />
           <span>SpaceMap</span>
         </div>
         <nav className="top-tabs" aria-label="Main product views">
@@ -1258,7 +1461,15 @@ function App() {
         <div className="topbar-balance" aria-hidden="true" />
       </Card>
 
-      <div className={`workspace tour-workspace ${section === "proof" ? "proof-mode" : ""}`}>
+      <AnimatePresence mode="wait" initial={false}>
+      <motion.div
+        key={section}
+        className={`workspace tour-workspace ${section === "proof" ? "proof-mode" : ""} mobile-panel-${mobilePanel}`}
+        initial={{ opacity: 0, y: 8, scale: 0.996 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: -6, scale: 0.998 }}
+        transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+      >
         <nav className="rail card" aria-label="Primary navigation">
           <Tooltip>
             <TooltipTrigger render={<Button variant="ghost" size="icon" className={`rail-item ${section === "plan" ? "active" : ""}`} onClick={() => navigateTo("plan")} aria-label="Floor plan" />}>
@@ -1271,6 +1482,12 @@ function App() {
               <Upload />
             </TooltipTrigger>
             <TooltipContent side="right">Upload property plan</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger render={<Button variant="ghost" size="icon" className={`rail-item ${section === "proof" ? "active" : ""}`} onClick={() => navigateTo("proof")} aria-label="Proof of work" />}>
+              <BadgeCheck />
+            </TooltipTrigger>
+            <TooltipContent side="right">Proof of work</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger render={<Button variant="ghost" size="icon" className={`rail-item push-bottom ${section === "settings" ? "active" : ""}`} onClick={() => navigateTo("settings")} aria-label="Settings" />}>
@@ -1523,6 +1740,11 @@ function App() {
         )}
 
         <Card className={`details-panel card ${section === "upload" ? "upload-sidebar tour-cad-ai" : ""} ${section === "plan" && mobileDetailsCollapsed ? "mobile-collapsed" : ""}`}>
+          <div className="mobile-sheet-bar">
+            <span></span>
+            <strong>{section === "upload" ? "CAD context" : "Property details"}</strong>
+            <Button variant="ghost" size="icon" onClick={() => setMobilePanel("canvas")} aria-label="Close details drawer"><X /></Button>
+          </div>
           {section === "upload" ? (
             <>
               <div className="panel-heading">
@@ -1589,6 +1811,11 @@ function App() {
         <Card className="canvas-panel card">{centerPanel}</Card>
 
         <aside className="summary-column">
+          <div className="mobile-sheet-bar">
+            <span></span>
+            <strong>{section === "upload" ? "CAD analysis" : "AI price result"}</strong>
+            <Button variant="ghost" size="icon" onClick={() => setMobilePanel("canvas")} aria-label="Close result drawer"><X /></Button>
+          </div>
           {section === "upload" ? (
             <>
               <Card className="summary-card card upload-summary">
@@ -1693,29 +1920,36 @@ function App() {
             </>
           )}
         </aside>
-      </div>
+      </motion.div>
+      </AnimatePresence>
 
-      <nav className="mobile-product-nav card" aria-label="Mobile product navigation">
-        <a href={SECTION_PATHS.plan} aria-current={section === "plan" ? "page" : undefined} className={section === "plan" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("plan"); }}><Sparkles /><span>Price home</span></a>
-        <a href={SECTION_PATHS.upload} aria-current={section === "upload" ? "page" : undefined} className={section === "upload" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("upload"); }}><Upload /><span>CAD price</span></a>
-        <a href={SECTION_PATHS.proof} aria-current={section === "proof" ? "page" : undefined} className={section === "proof" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("proof"); }}><BadgeCheck /><span>Proof</span></a>
-      </nav>
+      {section !== "proof" && section !== "settings" && mobilePanel !== "canvas" && <button className="mobile-sheet-backdrop" onClick={() => setMobilePanel("canvas")} aria-label="Close open drawer" />}
+      <div className={`mobile-control-dock card ${section === "proof" || section === "settings" ? "routes-only" : ""}`}>
+        {section !== "proof" && section !== "settings" && (
+          <div className="mobile-panel-switch" aria-label="Workspace panels">
+            <button className={mobilePanel === "details" ? "active" : ""} onClick={() => setMobilePanel(mobilePanel === "details" ? "canvas" : "details")}><SlidersHorizontal /><span>{section === "upload" ? "Context" : "Details"}</span></button>
+            <button className={mobilePanel === "canvas" ? "active" : ""} onClick={() => setMobilePanel("canvas")}><MapIcon /><span>{section === "upload" ? "Preview" : "Plan"}</span></button>
+            <button className={mobilePanel === "result" ? "active" : ""} onClick={() => setMobilePanel(mobilePanel === "result" ? "canvas" : "result")}><Sparkles /><span>{section === "upload" ? "Analysis" : "AI result"}</span></button>
+          </div>
+        )}
+        <nav className="mobile-product-nav" aria-label="Mobile product navigation">
+          <a href={SECTION_PATHS.plan} aria-current={section === "plan" ? "page" : undefined} className={section === "plan" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("plan"); }}><Sparkles /><span>Price home</span></a>
+          <a href={SECTION_PATHS.upload} aria-current={section === "upload" ? "page" : undefined} className={section === "upload" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("upload"); }}><Upload /><span>CAD price</span></a>
+          <a href={SECTION_PATHS.proof} aria-current={section === "proof" ? "page" : undefined} className={section === "proof" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("proof"); }}><BadgeCheck /><span>Proof</span></a>
+        </nav>
+      </div>
 
       {mapOpen && (
         <div className="map-overlay" role="presentation" onMouseDown={() => setMapOpen(false)}>
           <section className="map-dialog card" role="dialog" aria-modal="true" aria-labelledby="map-title" onMouseDown={(event) => event.stopPropagation()}>
             <header>
               <div>
-                <span className="eyebrow">Real map preview</span>
-                <h2 id="map-title">{mapQuery}</h2>
+                <span className="eyebrow">Interactive location picker</span>
+                <h2 id="map-title">Choose the exact property location</h2>
               </div>
               <Button variant="ghost" size="icon" onClick={() => setMapOpen(false)} aria-label="Close map"><X /></Button>
             </header>
-            <iframe title={`Map of ${mapQuery}`} src={mapEmbedUrl} loading="lazy" referrerPolicy="no-referrer-when-downgrade" />
-            <footer>
-              <p><MapPinned /> Map follows the location and locality fields.</p>
-              <Button variant="outline" onClick={() => window.open(mapPageUrl, "_blank", "noopener,noreferrer")}><ExternalLink /> Open in Google Maps</Button>
-            </footer>
+            <LocationPickerMap query={mapQuery} onUse={useMapSelection} />
           </section>
         </div>
       )}
