@@ -140,6 +140,47 @@ const WELCOME_TOUR_KEY = "spacemap-welcome-tour-v1";
 const PREDICTION_COOLDOWN_MS = 1800;
 const SOURCE_URL = "https://github.com/YUST777/iti_ai_project";
 const MODEL_URL = "https://huggingface.co/duck233/iti-house-price-model";
+const DATASET_URL = "https://www.kaggle.com/datasets/juhibhojani/house-price";
+const REPO_BLOB_URL = `${SOURCE_URL}/blob/main`;
+const REPO_COMMIT_URL = `${SOURCE_URL}/commit`;
+
+const MODEL_MILESTONES = [
+  {
+    name: "CatBoost baseline",
+    score: "79.59%",
+    size: "10.2 MiB",
+    note: "The first preserved model proved the end-to-end pipeline worked, but its errors were still too large.",
+    commit: "43379b2",
+  },
+  {
+    name: "LightGBM iteration",
+    score: "81.71%",
+    size: "23.7 MiB",
+    note: "A stronger tree model improved generalization and reduced MAE and RMSE on the same held-out split.",
+    commit: "4a54ebe",
+  },
+  {
+    name: "Price-per-sqft target",
+    score: "84.39%",
+    size: "35.2 MiB",
+    note: "Reframing the target around price per square foot made area relationships easier for the model to learn.",
+    commit: "3864a9e",
+  },
+  {
+    name: "Tree-model blend",
+    score: "85.34%",
+    size: "25.6 MiB",
+    note: "Blending LightGBM and CatBoost reduced the weaknesses of either model on its own.",
+    commit: "1a1bf76",
+  },
+  {
+    name: "Final full-refit ensemble",
+    score: "90.64%",
+    size: "55.0 MiB",
+    note: "LightGBM, CatBoost, and three neural networks were combined after validation, then refit for the final artifact.",
+    commit: "c289efa",
+  },
+] as const;
 
 const NUMERIC_LIMITS = {
   areaSqft: { min: 100, max: 25000, fallback: 1200 },
@@ -1206,9 +1247,14 @@ function App() {
           <Card className="proof-page card">
             <header className="proof-hero">
               <div>
-                <span className="eyebrow">Verifiable project evidence</span>
-                <h1>Proof that SpaceMap is real and working</h1>
-                <p>Every check below calls the deployed services or opens the public artifact behind the claim.</p>
+                <span className="eyebrow">Proof of work · August 1–2, 2026</span>
+                <h1>From a 79.59% baseline to a live 90.64% property intelligence product</h1>
+                <p>This is the complete project story: the assignment, the model iterations, the product decisions, the failed deployment routes, the final architecture, and the work that is still honestly in progress.</p>
+                <div className="proof-meta-row" aria-label="Project summary">
+                  <span>187,531 raw listings</span>
+                  <span>5 preserved model milestones</span>
+                  <span>Real API + database</span>
+                </div>
               </div>
               <Button className="dark-button proof-run-button" onClick={runLiveProof} disabled={liveProof.status === "loading"}>
                 <RefreshCw className={liveProof.status === "loading" ? "spinning" : ""} />
@@ -1242,26 +1288,200 @@ function App() {
             {liveProof.status === "error" && <p className="proof-error">{liveProof.message}</p>}
             {liveProof.status === "success" && <p className="proof-timestamp">Last verified at {liveProof.checkedAt} using the current property inputs.</p>}
 
-            <div className="proof-content-grid">
-              <section className="proof-process">
-                <div className="proof-section-heading"><span className="eyebrow">The process</span><h2>How we built it without leakage</h2></div>
-                <ol>
-                  <li><span>01</span><div><strong>Cleaned the property dataset</strong><p>Removed invalid records and prevented price text or rupee values from leaking into the features.</p></div></li>
-                  <li><span>02</span><div><strong>Compared real model families</strong><p>Tested tree ensembles, neural networks, encoding strategies, and stricter cleaning on held-out data.</p></div></li>
-                  <li><span>03</span><div><strong>Locked the validated ensemble</strong><p>Kept the honest 90.64% held-out R² model instead of chasing an unrealistic leaked score.</p></div></li>
-                  <li><span>04</span><div><strong>Deployed a real prediction API</strong><p>Packaged the artifact in FastAPI on Railway with validation, throttling, health checks, and Supabase history.</p></div></li>
-                  <li><span>05</span><div><strong>Connected the production interface</strong><p>The React workspace sends real requests, edits the plan, uploads CAD files, and synchronizes projects.</p></div></li>
-                </ol>
+            <article className="proof-story">
+              <section className="proof-opening proof-surface">
+                <div className="proof-copy proof-lede">
+                  <span className="proof-chapter-number">00</span>
+                  <span className="eyebrow">Where the project started</span>
+                  <h2>A classroom brief became a full product engineering problem</h2>
+                  <p>The ITI guide asked for an end-to-end machine-learning application: inspect a messy Indian property dataset, clean it, compare at least two regressors, export the winning pipeline, serve it with FastAPI, connect it to a React interface, and publish reproducible evidence on GitHub.</p>
+                  <blockquote>“At first I only wanted a model that could predict a house price. After the first result, I kept asking what would make the project feel real: a better model, a better interface, a live API, saved projects, and a more creative way to describe the property.”</blockquote>
+                  <p>The work therefore moved through three different disciplines: data science, product design, and deployment. The hardest part was not drawing the interface. It was keeping the model honest while making a heavy Python ML stack available from a public web product.</p>
+                </div>
+                <aside className="proof-brief-card">
+                  <span className="eyebrow">The assignment contract</span>
+                  <h3>What had to be delivered</h3>
+                  <ul>
+                    <li><BadgeCheck /> Real cleaning and feature engineering</li>
+                    <li><BadgeCheck /> Multiple models with held-out metrics</li>
+                    <li><BadgeCheck /> Exported reproducible model artifact</li>
+                    <li><BadgeCheck /> FastAPI <code>/health</code> and <code>/predict</code></li>
+                    <li><BadgeCheck /> React form with real prediction states</li>
+                    <li><BadgeCheck /> Public GitHub evidence and deployment</li>
+                  </ul>
+                  <a className="proof-inline-link" href={DATASET_URL} target="_blank" rel="noreferrer">Open the assignment dataset <ExternalLink /></a>
+                </aside>
               </section>
 
-              <section className="proof-links">
-                <div className="proof-section-heading"><span className="eyebrow">Open the evidence</span><h2>Public proof links</h2></div>
-                <a href={`${API_URL}/health`} target="_blank" rel="noreferrer"><span><Server /><div><strong>Live API health</strong><small>Model, score, and database status</small></div></span><ExternalLink /></a>
-                <a href={`${API_URL}/docs`} target="_blank" rel="noreferrer"><span><CircleDot /><div><strong>Interactive API docs</strong><small>Inspect and run the FastAPI endpoints</small></div></span><ExternalLink /></a>
-                <a href={SOURCE_URL} target="_blank" rel="noreferrer"><span><Code2 /><div><strong>Public source repository</strong><small>Frontend, API, deployment, and research</small></div></span><ExternalLink /></a>
-                <a href={MODEL_URL} target="_blank" rel="noreferrer"><span><Sparkles /><div><strong>Published model artifact</strong><small>The model downloaded by Railway</small></div></span><ExternalLink /></a>
+              <section className="proof-chapter proof-surface">
+                <div className="proof-chapter-header">
+                  <span className="proof-chapter-number">01</span>
+                  <div><span className="eyebrow">Data and modeling</span><h2>The score was earned through iteration, not leakage</h2></div>
+                </div>
+                <div className="proof-two-column-copy">
+                  <div className="proof-copy">
+                    <p>The source contained 187,531 listings and 21 columns, but the raw values were not model-ready. Prices mixed Lac, Crore, commas, and “Call for Price.” Areas mixed square feet and square metres. Floors contained text such as Ground and Basement. Several fields were mostly missing, and repeated listings could make a random split look better than it really was.</p>
+                    <p>The shared pipeline parsed prices and areas, normalized categories, extracted floor and room counts, removed invalid rows and extreme price-per-square-foot outliers, and deduplicated listings before training. The final high-accuracy run used 57,058 filtered rows: 48,499 for fitting and 8,559 for the untouched held-out test.</p>
+                  </div>
+                  <div className="proof-data-points" aria-label="Training data facts">
+                    <article><strong>187,531</strong><span>raw rows inspected</span></article>
+                    <article><strong>57,058</strong><span>final quality-filtered rows</span></article>
+                    <article><strong>8,559</strong><span>held-out test rows</span></article>
+                    <article><strong>133 sec</strong><span>final recorded GPU training</span></article>
+                  </div>
+                </div>
+
+                <div className="proof-subheading">
+                  <span className="eyebrow">Five Git-preserved milestones</span>
+                  <h3>How the model moved from a baseline to the final ensemble</h3>
+                  <p>There were additional parameter and neural-network experiments inside these stages; these five commits are the clean milestones that can be independently inspected.</p>
+                </div>
+                <ol className="model-journey">
+                  {MODEL_MILESTONES.map((milestone, index) => (
+                    <li key={milestone.commit} className={index === MODEL_MILESTONES.length - 1 ? "winner" : ""}>
+                      <div className="model-journey-index">{String(index + 1).padStart(2, "0")}</div>
+                      <div className="model-journey-copy">
+                        <div><strong>{milestone.name}</strong>{index === MODEL_MILESTONES.length - 1 && <span className="winner-badge">Selected</span>}</div>
+                        <p>{milestone.note}</p>
+                        <a href={`${REPO_COMMIT_URL}/${milestone.commit}`} target="_blank" rel="noreferrer">Inspect commit {milestone.commit} <ExternalLink /></a>
+                      </div>
+                      <div className="model-journey-metrics"><span>{milestone.score} R²</span><small>{milestone.size}</small></div>
+                    </li>
+                  ))}
+                </ol>
+
+                <div className="proof-integrity-grid">
+                  <article>
+                    <span className="proof-icon"><BadgeCheck /></span>
+                    <div><strong>No target leakage</strong><p>The model excludes the source price-per-square-foot field, the rupee price fields, and price-bearing description text.</p></div>
+                  </article>
+                  <article>
+                    <span className="proof-icon"><CircleDot /></span>
+                    <div><strong>Held-out evaluation</strong><p>The reported 90.64% is test-set R², not a training score. Final MAE is ₹1,535,857.51 and RMSE is ₹2,883,442.92.</p></div>
+                  </article>
+                  <article>
+                    <span className="proof-icon"><Sparkles /></span>
+                    <div><strong>A larger artifact for a reason</strong><p>The first preserved artifact was 10.2 MiB; the 55 MiB final artifact contains LightGBM, CatBoost, and three neural networks.</p></div>
+                  </article>
+                </div>
+                <div className="proof-link-row">
+                  <a className="proof-inline-link" href={`${REPO_BLOB_URL}/notebooks/pipeline.py`} target="_blank" rel="noreferrer">Read the cleaning pipeline <ExternalLink /></a>
+                  <a className="proof-inline-link" href={`${REPO_BLOB_URL}/models/model_metrics.json`} target="_blank" rel="noreferrer">Open the final metrics JSON <ExternalLink /></a>
+                  <a className="proof-inline-link" href={`${REPO_BLOB_URL}/notebooks/train_high_accuracy_full_refit.py`} target="_blank" rel="noreferrer">Inspect final training code <ExternalLink /></a>
+                </div>
               </section>
-            </div>
+
+              <section className="proof-chapter proof-surface">
+                <div className="proof-chapter-header">
+                  <span className="proof-chapter-number">02</span>
+                  <div><span className="eyebrow">Product and interface</span><h2>Turning model inputs into a product people can understand</h2></div>
+                </div>
+                <div className="proof-story-grid">
+                  <div className="proof-copy">
+                    <p>An AI-generated visual reference helped explore the original direction, but the final interface was built as a functional React and TypeScript product rather than copied as a static mockup. Vite handles the frontend build; shadcn-style primitives and Base UI provide accessible controls; Konva powers the editable plan canvas; Driver.js explains the two AI flows to a first-time user.</p>
+                    <p>The property form maps directly to the FastAPI schema. Numeric fields are clamped to safe ranges, empty values recover to defaults, requests are rate-limited, and the result only appears after a real API response. Project state is cached in the browser for instant recovery and synchronized to Supabase when the backend is available.</p>
+                    <p>Supabase currently stores anonymous project snapshots and prediction history. A complete user account and login flow is not presented as finished work.</p>
+                    <p>The visual floor plan is also functional. Changing bedrooms, bathrooms, area, or floor regenerates a proportional layout. Rooms can be moved, added, renamed, deleted, given doors or plants, snapped to a grid, measured, undone, redone, reset, and viewed in 2D or a simple 3D mode.</p>
+                  </div>
+                  <div className="proof-feature-stack">
+                    <article><Code2 /><div><strong>React + TypeScript + Vite</strong><p>Typed property state, real network requests, reusable UI primitives, and a production build.</p></div></article>
+                    <article><Layers3 /><div><strong>Editable floor-plan system</strong><p>Generated geometry is interactive rather than a decorative image.</p></div></article>
+                    <article><Database /><div><strong>Browser recovery + Supabase</strong><p>Local cache keeps work immediate; PostgreSQL persistence keeps projects and predictions durable.</p></div></article>
+                    <article><Sparkles /><div><strong>Guided onboarding</strong><p>A mandatory three-step tour introduces price prediction, CAD upload, and the main workspace.</p></div></article>
+                  </div>
+                </div>
+                <div className="proof-link-row">
+                  <a className="proof-inline-link" href={`${REPO_COMMIT_URL}/a12eafe`} target="_blank" rel="noreferrer">First functional workspace <ExternalLink /></a>
+                  <a className="proof-inline-link" href={`${REPO_COMMIT_URL}/13b4b95`} target="_blank" rel="noreferrer">Floor-plan production pass <ExternalLink /></a>
+                  <a className="proof-inline-link" href={`${REPO_COMMIT_URL}/8be0523`} target="_blank" rel="noreferrer">Supabase persistence <ExternalLink /></a>
+                </div>
+              </section>
+
+              <section className="proof-chapter proof-surface">
+                <div className="proof-chapter-header">
+                  <span className="proof-chapter-number">03</span>
+                  <div><span className="eyebrow">Deployment</span><h2>The hardest lesson was hosting a real ML stack</h2></div>
+                </div>
+                <div className="proof-two-column-copy">
+                  <div className="proof-copy">
+                    <p>A normal Vercel frontend is small, but the prediction service needs Python, CatBoost, LightGBM, PyTorch, the 55 MiB artifact, and enough memory to load everything together. That made deployment the most difficult part of the project.</p>
+                    <p>Several routes were built and tested. Hugging Face received the public model artifact and a Docker Space package. Render received a Docker blueprint. Vercel Python was attempted, but the full ML dependency stack exceeded the practical serverless bundle path. Railway was the simplest service that could build the Docker image, download the exact artifact, start FastAPI, and keep the API callable by the Vercel frontend.</p>
+                    <p>The final architecture separates responsibilities instead of forcing everything into one host. The browser UI stays lightweight on Vercel, Railway performs inference and validation, Hugging Face stores the versioned model pieces, and Supabase stores project snapshots and prediction history.</p>
+                  </div>
+                  <ol className="deployment-trials">
+                    <li><span>01</span><div><strong>Hugging Face</strong><p>Published the model and prepared a Docker Space route.</p></div><a href={`${REPO_COMMIT_URL}/8dbcd07`} target="_blank" rel="noreferrer">Proof <ExternalLink /></a></li>
+                    <li><span>02</span><div><strong>Render</strong><p>Created a Docker deployment and health-check blueprint.</p></div><a href={`${REPO_COMMIT_URL}/752050e`} target="_blank" rel="noreferrer">Proof <ExternalLink /></a></li>
+                    <li><span>03</span><div><strong>Vercel Python</strong><p>Tested serverless packaging before keeping Vercel frontend-only.</p></div><a href={`${REPO_COMMIT_URL}/3c1eb58`} target="_blank" rel="noreferrer">Proof <ExternalLink /></a></li>
+                    <li className="selected"><span>04</span><div><strong>Railway</strong><p>Runs the current FastAPI model service and connects to Supabase.</p></div><a href={`${API_URL}/health`} target="_blank" rel="noreferrer">Live <ExternalLink /></a></li>
+                  </ol>
+                </div>
+
+                <div className="proof-architecture" aria-label="Production architecture">
+                  <article><span>01</span><strong>Vercel</strong><small>React interface</small></article>
+                  <i>→</i>
+                  <article><span>02</span><strong>Railway</strong><small>FastAPI inference</small></article>
+                  <i>→</i>
+                  <article><span>03</span><strong>Hugging Face</strong><small>55 MiB model artifact</small></article>
+                  <i>↔</i>
+                  <article><span>04</span><strong>Supabase</strong><small>Projects + history</small></article>
+                </div>
+              </section>
+
+              <section className="proof-chapter proof-surface">
+                <div className="proof-chapter-header">
+                  <span className="proof-chapter-number">04</span>
+                  <div><span className="eyebrow">Creative extension</span><h2>From manual inputs to visual property understanding</h2></div>
+                </div>
+                <div className="proof-story-grid">
+                  <div className="proof-copy">
+                    <p>The first creative idea was to make the inputs visible. If a user chooses three bedrooms, the application should not only send the number <code>3</code>; it should generate a plan with three editable bedroom spaces so the user can understand what the data represents.</p>
+                    <p>The next question was more ambitious: what if the owner does not know the area or room counts, but already has an engineering drawing, blueprint, or CAD image? The proposed pipeline accepts the image, extracts walls and openings with a separate deep-learning parser, converts the geometry into structured JSON, asks the user to confirm uncertain fields, and then sends the confirmed property data to the existing price model.</p>
+                    <p>The architecture deliberately keeps the two models separate. The validated price model understands structured tabular features, not pixels. A vision parser must first produce geometry and confidence values before price prediction is safe.</p>
+                  </div>
+                  <aside className="proof-truth-card">
+                    <span className="truth-status"><CircleDot /> Honest implementation status</span>
+                    <h3>What works now vs. what is next</h3>
+                    <dl>
+                      <div><dt>Live now</dt><dd>CAD image selection, validation, local preview, upload metadata, and the editable generated plan.</dd></div>
+                      <div><dt>Researched</dt><dd>A pretrained U-Net floor-plan parser baseline and a JSON geometry contract.</dd></div>
+                      <div><dt>Not claimed as live</dt><dd>Automatic image-to-geometry inference remains disabled until the separate parser service is deployed and benchmarked.</dd></div>
+                    </dl>
+                    <a className="proof-inline-link" href={`${REPO_BLOB_URL}/docs/cad-image-parser-research.md`} target="_blank" rel="noreferrer">Read the CAD parser decision <ExternalLink /></a>
+                  </aside>
+                </div>
+              </section>
+
+              <section className="proof-chapter proof-lessons proof-surface">
+                <div className="proof-chapter-header">
+                  <span className="proof-chapter-number">05</span>
+                  <div><span className="eyebrow">What I learned</span><h2>The final result is more than the 90.64% score</h2></div>
+                </div>
+                <div className="proof-lesson-grid">
+                  <article><span>01</span><strong>Accuracy needs a trustworthy test</strong><p>A higher number is worthless if price text or duplicate listings leak into evaluation.</p></article>
+                  <article><span>02</span><strong>The model contract shapes the UI</strong><p>Every frontend field must map to the exact schema and preprocessing used during training.</p></article>
+                  <article><span>03</span><strong>Deployment is part of ML engineering</strong><p>A model is not a product until its dependencies, artifact, memory, cold start, and public API all work together.</p></article>
+                  <article><span>04</span><strong>Creative features still need boundaries</strong><p>The CAD vision idea is documented as a next-stage parser instead of being presented as finished without evidence.</p></article>
+                </div>
+                <blockquote className="proof-final-quote">“The hardest thing I learned was how to deploy a real ML model so a web application can actually use it. The biggest improvement was learning to prove every claim with a metric, a commit, an artifact, or a live request.”</blockquote>
+              </section>
+
+              <section className="proof-evidence proof-surface">
+                <div className="proof-chapter-header">
+                  <span className="proof-chapter-number">06</span>
+                  <div><span className="eyebrow">Open the evidence</span><h2>Inspect the project yourself</h2></div>
+                </div>
+                <div className="proof-evidence-grid">
+                  <a href={`${API_URL}/health`} target="_blank" rel="noreferrer"><span><Server /><div><strong>Live API health</strong><small>Model name, held-out R², and database connection</small></div></span><ExternalLink /></a>
+                  <a href={`${API_URL}/docs#/default/predict_predict_post`} target="_blank" rel="noreferrer"><span><CircleDot /><div><strong>Real POST /predict</strong><small>Open the interactive FastAPI endpoint</small></div></span><ExternalLink /></a>
+                  <a href={SOURCE_URL} target="_blank" rel="noreferrer"><span><Code2 /><div><strong>Public source repository</strong><small>Complete Git history and implementation</small></div></span><ExternalLink /></a>
+                  <a href={`${SOURCE_URL}/commits/main`} target="_blank" rel="noreferrer"><span><Layers3 /><div><strong>Development timeline</strong><small>Every major model, deployment, and UI milestone</small></div></span><ExternalLink /></a>
+                  <a href={MODEL_URL} target="_blank" rel="noreferrer"><span><Sparkles /><div><strong>Published model artifact</strong><small>Validated model pieces and model card</small></div></span><ExternalLink /></a>
+                  <a href={`${REPO_BLOB_URL}/models/model_metrics.json`} target="_blank" rel="noreferrer"><span><BadgeCheck /><div><strong>Final metrics report</strong><small>R², MAE, RMSE, split sizes, and blend weights</small></div></span><ExternalLink /></a>
+                  <a href={`${REPO_BLOB_URL}/deployment/house-price-space/app.py`} target="_blank" rel="noreferrer"><span><Database /><div><strong>API + Supabase code</strong><small>Validation, rate limits, persistence, and inference</small></div></span><ExternalLink /></a>
+                  <a href={`${REPO_BLOB_URL}/vercel.json`} target="_blank" rel="noreferrer"><span><Box /><div><strong>Frontend deployment config</strong><small>Vite build and Railway API connection</small></div></span><ExternalLink /></a>
+                </div>
+              </section>
+            </article>
           </Card>
         )}
 
