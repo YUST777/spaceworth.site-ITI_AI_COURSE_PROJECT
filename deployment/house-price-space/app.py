@@ -7,6 +7,7 @@ from collections import defaultdict, deque
 from pathlib import Path
 from threading import Lock
 from typing import Literal
+from uuid import uuid4
 
 import joblib
 import numpy as np
@@ -122,11 +123,20 @@ def initialise_database() -> None:
             """
             CREATE TABLE IF NOT EXISTS spacemap_predictions (
                 id BIGSERIAL PRIMARY KEY,
+                query_id UUID,
                 project_id VARCHAR(128),
                 request JSONB NOT NULL,
                 predicted_price_inr NUMERIC(16, 2) NOT NULL,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
+            """
+        )
+        cursor.execute("ALTER TABLE spacemap_predictions ADD COLUMN IF NOT EXISTS query_id UUID")
+        cursor.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS spacemap_predictions_query_id_idx
+            ON spacemap_predictions (query_id)
+            WHERE query_id IS NOT NULL
             """
         )
         cursor.execute(
@@ -148,17 +158,17 @@ def database_is_ready() -> bool:
         return False
 
 
-def save_prediction(project_id: str | None, request: PropertyInput, price: float) -> None:
+def save_prediction(query_id: str, project_id: str | None, request: PropertyInput, price: float) -> None:
     if not DATABASE_URL:
         return
     safe_project_id = validated_project_id(project_id) if project_id else None
     with database_connection() as connection, connection.cursor() as cursor:
         cursor.execute(
             """
-            INSERT INTO spacemap_predictions (project_id, request, predicted_price_inr)
-            VALUES (%s, %s, %s)
+            INSERT INTO spacemap_predictions (query_id, project_id, request, predicted_price_inr)
+            VALUES (%s, %s, %s, %s)
             """,
-            (safe_project_id, Jsonb(request.model_dump(mode="json")), price),
+            (query_id, safe_project_id, Jsonb(request.model_dump(mode="json")), price),
         )
 
 
@@ -391,7 +401,7 @@ def get_predictions(project_id: str, limit: int = 10) -> dict[str, list[dict[str
     with database_connection() as connection, connection.cursor() as cursor:
         cursor.execute(
             """
-            SELECT request, predicted_price_inr, created_at
+            SELECT query_id, request, predicted_price_inr, created_at
             FROM spacemap_predictions
             WHERE project_id = %s
             ORDER BY created_at DESC
@@ -403,9 +413,10 @@ def get_predictions(project_id: str, limit: int = 10) -> dict[str, list[dict[str
     return {
         "predictions": [
             {
-                "request": row[0],
-                "predicted_price_inr": float(row[1]),
-                "created_at": row[2].isoformat(),
+                "query_id": str(row[0]) if row[0] else None,
+                "request": row[1],
+                "predicted_price_inr": float(row[2]),
+                "created_at": row[3].isoformat(),
             }
             for row in rows
         ]
@@ -416,7 +427,8 @@ def get_predictions(project_id: str, limit: int = 10) -> dict[str, list[dict[str
 def predict(
     request: PropertyInput,
     x_project_id: str | None = Header(default=None, alias="X-Project-ID"),
-) -> dict[str, float]:
+) -> dict[str, float | str]:
+    query_id = str(uuid4())
     price = round(service.predict(request), 2)
-    save_prediction(x_project_id, request, price)
-    return {"predicted_price_inr": price}
+    save_prediction(query_id, x_project_id, request, price)
+    return {"query_id": query_id, "predicted_price_inr": price}

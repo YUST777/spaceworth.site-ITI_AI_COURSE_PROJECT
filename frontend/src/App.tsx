@@ -15,16 +15,12 @@ import {
   Expand,
   FileImage,
   Code2,
-  Grid2X2,
   Layers3,
-  Magnet,
   MapPin,
   MapPinned,
   MousePointer2,
-  Redo2,
   RefreshCw,
   RotateCcw,
-  Ruler,
   Settings,
   Sparkles,
   Server,
@@ -32,7 +28,6 @@ import {
   TreePine,
   Type,
   Upload,
-  Undo2,
   Wifi,
   WifiOff,
   X,
@@ -89,7 +84,14 @@ type PlanRoom = {
 type PredictionState =
   | { status: "idle" }
   | { status: "loading" }
-  | { status: "success"; price: number }
+  | {
+      status: "success";
+      price: number;
+      queryId?: string;
+      queryIdSource?: "server" | "client";
+      request?: Record<string, unknown>;
+      response?: { query_id: string; predicted_price_inr: number };
+    }
   | { status: "error"; message: string };
 
 type ProjectState = {
@@ -143,6 +145,17 @@ const MODEL_URL = "https://huggingface.co/duck233/iti-house-price-model";
 const DATASET_URL = "https://www.kaggle.com/datasets/juhibhojani/house-price";
 const REPO_BLOB_URL = `${SOURCE_URL}/blob/main`;
 const REPO_COMMIT_URL = `${SOURCE_URL}/commit`;
+const SECTION_PATHS: Record<Section, string> = {
+  plan: "/price-my-home",
+  upload: "/cad-to-price",
+  proof: "/proof",
+  settings: "/settings",
+};
+
+function sectionFromPath(pathname: string): Section {
+  const match = (Object.entries(SECTION_PATHS) as Array<[Section, string]>).find(([, path]) => path === pathname);
+  return match?.[0] ?? "plan";
+}
 
 const MODEL_MILESTONES = [
   {
@@ -597,7 +610,7 @@ function FloorPlan({
 
 function App() {
   const [project, setProject] = useState<ProjectState>(loadProject);
-  const [section, setSection] = useState<Section>("plan");
+  const [section, setSection] = useState<Section>(() => sectionFromPath(window.location.pathname));
   const [canvasMode, setCanvasMode] = useState<CanvasMode>("2d");
   const [activeTool, setActiveTool] = useState<Tool>("select");
   const [selectedRoom, setSelectedRoom] = useState("living");
@@ -631,9 +644,31 @@ function App() {
   const layoutBedrooms = rooms.filter((room) => room.id.startsWith("bedroom")).length;
   const layoutBathrooms = rooms.filter((room) => room.id.startsWith("bathroom")).length;
   const pricePerSqft = prediction.status === "success" && areaSqft > 0 ? prediction.price / areaSqft : null;
+  const visiblePredictionRequest = prediction.status === "success" && prediction.request
+    ? prediction.request
+    : predictionPayload(safeFormView);
+  const visiblePredictionResponse = prediction.status === "success" && prediction.response
+    ? prediction.response
+    : null;
   const mapQuery = [form.locality, form.location, "India"].filter(Boolean).join(", ");
   const mapEmbedUrl = `https://www.google.com/maps?q=${encodeURIComponent(mapQuery)}&output=embed`;
   const mapPageUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapQuery)}`;
+
+  const navigateTo = (nextSection: Section, replace = false) => {
+    const nextPath = SECTION_PATHS[nextSection];
+    if (window.location.pathname !== nextPath) {
+      window.history[replace ? "replaceState" : "pushState"]({}, "", nextPath);
+    }
+    setSection(nextSection);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    if (window.location.pathname === "/") navigateTo("plan", true);
+    const handlePopState = () => setSection(sectionFromPath(window.location.pathname));
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
   const updateForm = <K extends keyof PropertyForm>(key: K, value: PropertyForm[K]) => {
     setProject((current) => ({
@@ -686,7 +721,7 @@ function App() {
 
   const startWelcomeTour = () => {
     welcomeTour.current?.destroy();
-    setSection("plan");
+    navigateTo("plan");
     window.scrollTo({ top: 0, behavior: "smooth" });
     window.setTimeout(() => {
       const tour = driver({
@@ -723,7 +758,7 @@ function App() {
               side: "left",
               align: "center",
               onNextClick: (_element, _step, options) => {
-                setSection("upload");
+                navigateTo("upload");
                 window.setTimeout(() => options.driver.moveNext(), 180);
               },
             },
@@ -737,7 +772,7 @@ function App() {
               side: "right",
               align: "start",
               onPrevClick: (_element, _step, options) => {
-                setSection("plan");
+                navigateTo("plan");
                 window.setTimeout(() => options.driver.movePrevious(), 180);
               },
             },
@@ -746,7 +781,7 @@ function App() {
         onDoneClick: (_element, _step, options) => {
           localStorage.setItem(WELCOME_TOUR_KEY, "complete");
           options.driver.destroy();
-          setSection("plan");
+          navigateTo("plan");
           window.scrollTo({ top: 0, behavior: "smooth" });
         },
       });
@@ -768,7 +803,7 @@ function App() {
     if (uploadedPlan) URL.revokeObjectURL(uploadedPlan.url);
     setUploadedPlan({ name: file.name, size: file.size, type: file.type, url: URL.createObjectURL(file) });
     setUploadAnalysis({ status: "ready" });
-    setSection("upload");
+    navigateTo("upload");
   };
 
   const removeUploadedPlan = () => {
@@ -957,18 +992,28 @@ function App() {
     lastPredictionRequestAt.current = now;
     setProject((current) => ({ ...current, prediction: { status: "loading" } }));
     try {
+      const payload = predictionPayload(safeForm);
       const response = await fetch(`${API_URL}/predict`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Project-ID": PROJECT_ID },
-        body: JSON.stringify(predictionPayload(safeForm)),
+        body: JSON.stringify(payload),
       });
-      const result = (await response.json()) as { predicted_price_inr?: number; detail?: string };
+      const result = (await response.json()) as { query_id?: string; predicted_price_inr?: number; detail?: string };
       if (!response.ok || typeof result.predicted_price_inr !== "number") {
         throw new Error(result.detail ?? "The prediction service returned an invalid response.");
       }
+      const serverQueryId = typeof result.query_id === "string" && result.query_id ? result.query_id : null;
+      const queryId = serverQueryId ?? crypto.randomUUID();
       setProject((current) => ({
         ...current,
-        prediction: { status: "success", price: result.predicted_price_inr! },
+        prediction: {
+          status: "success",
+          price: result.predicted_price_inr!,
+          queryId,
+          queryIdSource: serverQueryId ? "server" : "client",
+          request: payload,
+          response: { query_id: queryId, predicted_price_inr: result.predicted_price_inr! },
+        },
       }));
       setApiHealth("online");
     } catch (error) {
@@ -1167,14 +1212,6 @@ function App() {
               <Button className={canvasMode === "3d" ? "dark-button compact" : "soft-button compact"} onClick={() => setCanvasMode("3d")}>3D view</Button>
               <Button variant="outline" size="icon" className="soft-button icon-button" onClick={() => document.documentElement.requestFullscreen?.()} aria-label="Fullscreen"><Expand /></Button>
             </div>
-            <div className="plan-utilities" aria-label="Floor plan controls">
-              <Button variant="ghost" size="icon" onClick={undoRooms} disabled={!roomHistory.current.length} title="Undo" aria-label="Undo"><Undo2 /></Button>
-              <Button variant="ghost" size="icon" onClick={redoRooms} disabled={!roomFuture.current.length} title="Redo" aria-label="Redo"><Redo2 /></Button>
-              <Button variant="ghost" size="icon" className={snapToGrid ? "active" : ""} onClick={() => setSnapToGrid((value) => !value)} title="Snap rooms to grid" aria-label="Toggle snap to grid"><Magnet /></Button>
-              <Button variant="ghost" size="icon" className={showGrid ? "active" : ""} onClick={() => setShowGrid((value) => !value)} title="Show grid" aria-label="Toggle grid"><Grid2X2 /></Button>
-              <Button variant="ghost" size="icon" className={showDimensions ? "active" : ""} onClick={() => setShowDimensions((value) => !value)} title="Show dimensions" aria-label="Toggle dimensions"><Ruler /></Button>
-              <Button variant="ghost" size="icon" onClick={resetGeneratedPlan} title="Reset generated plan" aria-label="Reset generated plan"><RotateCcw /></Button>
-            </div>
           </div>
         </div>
         <FloorPlan
@@ -1214,9 +1251,9 @@ function App() {
           <span>SpaceMap</span>
         </div>
         <nav className="top-tabs" aria-label="Main product views">
-          <button type="button" className={section === "plan" ? "active" : ""} onClick={() => setSection("plan")}>Price my home</button>
-          <button type="button" className={section === "upload" ? "active" : ""} onClick={() => setSection("upload")}>CAD to price</button>
-          <button type="button" className={section === "proof" ? "active" : ""} onClick={() => setSection("proof")}>Proof</button>
+          <a href={SECTION_PATHS.plan} aria-current={section === "plan" ? "page" : undefined} className={section === "plan" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("plan"); }}>Price my home</a>
+          <a href={SECTION_PATHS.upload} aria-current={section === "upload" ? "page" : undefined} className={section === "upload" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("upload"); }}>CAD to price</a>
+          <a href={SECTION_PATHS.proof} aria-current={section === "proof" ? "page" : undefined} className={section === "proof" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("proof"); }}>Proof</a>
         </nav>
         <div className="topbar-balance" aria-hidden="true" />
       </Card>
@@ -1224,19 +1261,19 @@ function App() {
       <div className={`workspace tour-workspace ${section === "proof" ? "proof-mode" : ""}`}>
         <nav className="rail card" aria-label="Primary navigation">
           <Tooltip>
-            <TooltipTrigger render={<Button variant="ghost" size="icon" className={`rail-item ${section === "plan" ? "active" : ""}`} onClick={() => setSection("plan")} aria-label="Floor plan" />}>
+            <TooltipTrigger render={<Button variant="ghost" size="icon" className={`rail-item ${section === "plan" ? "active" : ""}`} onClick={() => navigateTo("plan")} aria-label="Floor plan" />}>
               <Layers3 />
             </TooltipTrigger>
             <TooltipContent side="right">Floor plan</TooltipContent>
           </Tooltip>
           <Tooltip>
-            <TooltipTrigger render={<Button variant="ghost" size="icon" className={`rail-item ${section === "upload" ? "active" : ""}`} onClick={() => setSection("upload")} aria-label="Upload property plan" />}>
+            <TooltipTrigger render={<Button variant="ghost" size="icon" className={`rail-item ${section === "upload" ? "active" : ""}`} onClick={() => navigateTo("upload")} aria-label="Upload property plan" />}>
               <Upload />
             </TooltipTrigger>
             <TooltipContent side="right">Upload property plan</TooltipContent>
           </Tooltip>
           <Tooltip>
-            <TooltipTrigger render={<Button variant="ghost" size="icon" className={`rail-item push-bottom ${section === "settings" ? "active" : ""}`} onClick={() => setSection("settings")} aria-label="Settings" />}>
+            <TooltipTrigger render={<Button variant="ghost" size="icon" className={`rail-item push-bottom ${section === "settings" ? "active" : ""}`} onClick={() => navigateTo("settings")} aria-label="Settings" />}>
               <Settings />
             </TooltipTrigger>
             <TooltipContent side="right">Settings</TooltipContent>
@@ -1603,25 +1640,52 @@ function App() {
           <Card className={`prediction-card card tour-main-ai ${prediction.status}`}>
             <div className="prediction-heading">
               <div>
-                <span className="eyebrow">AI price prediction</span>
-                <h2>Estimated value</h2>
+                <span className="eyebrow">Live model trace</span>
+                <h2>Request → AI response</h2>
               </div>
               <Box />
             </div>
-            <div className="prediction-value">
-              {prediction.status === "success" ? (
-                <>
-                  <strong>{formatCurrency(prediction.price)}</strong>
-                  {pricePerSqft && <span>{formatCurrency(pricePerSqft)} per sq ft</span>}
-                </>
-              ) : prediction.status === "loading" ? (
-                <><strong>Calculating…</strong><span>Running the real 90.64% R² model</span></>
-              ) : (
-                <strong className="prediction-placeholder" aria-label="No prediction yet">—</strong>
-              )}
+            <ol className="prediction-steps">
+              <li className="complete">
+                <span>1</span>
+                <div><strong>Validate input</strong><small>Schema-valid JSON</small></div>
+                <BadgeCheck />
+              </li>
+              <li className={prediction.status === "loading" ? "active" : prediction.status === "success" ? "complete" : ""}>
+                <span>2</span>
+                <div><strong>Run model</strong><small>{prediction.status === "loading" ? "Sending…" : prediction.status === "success" ? "POST /predict · 200" : "Railway API ready"}</small></div>
+                {prediction.status === "loading" ? <RefreshCw className="spinning" /> : prediction.status === "success" ? <BadgeCheck /> : <CircleDot />}
+              </li>
+              <li className={prediction.status === "success" ? "complete" : ""}>
+                <span>3</span>
+                <div>
+                  <strong>{prediction.status === "success" ? formatCurrency(prediction.price) : "Receive AI response"}</strong>
+                  <small>{prediction.status === "success" && pricePerSqft ? `${formatCurrency(pricePerSqft)} per sq ft` : "Server price and query identifier appear here"}</small>
+                </div>
+                {prediction.status === "success" ? <BadgeCheck /> : <CircleDot />}
+              </li>
+            </ol>
+
+            {prediction.status === "success" && (
+              <div className="prediction-query-id">
+                <span>{prediction.queryIdSource === "server" ? "Server query ID" : "Trace ID"}</span>
+                <code>{prediction.queryId}</code>
+                {prediction.queryIdSource === "client" && <small>Railway is still deploying server-issued IDs.</small>}
+              </div>
+            )}
+
+            <div className="prediction-json-grid">
+              <article>
+                <header><span>01</span><strong>Input JSON</strong></header>
+                <pre>{JSON.stringify(visiblePredictionRequest)}</pre>
+              </article>
+              <article className={visiblePredictionResponse ? "has-response" : ""}>
+                <header><span>02</span><strong>AI response JSON</strong></header>
+                {visiblePredictionResponse ? <pre>{JSON.stringify(visiblePredictionResponse)}</pre> : <p>Run the real model to receive a signed query trace and price.</p>}
+              </article>
             </div>
             {prediction.status === "error" && <p className="prediction-error">{prediction.message}</p>}
-            <div className="model-score"><span>Validated model score</span><strong>90.64% R²</strong></div>
+            <div className="model-score"><span>Validated held-out model</span><strong>90.64% R²</strong></div>
             <Button className="dark-button predict-button" onClick={predict} disabled={prediction.status === "loading"}>
               <Sparkles /> {prediction.status === "loading" ? "Predicting price…" : "Predict price"}
             </Button>
@@ -1630,6 +1694,12 @@ function App() {
           )}
         </aside>
       </div>
+
+      <nav className="mobile-product-nav card" aria-label="Mobile product navigation">
+        <a href={SECTION_PATHS.plan} aria-current={section === "plan" ? "page" : undefined} className={section === "plan" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("plan"); }}><Sparkles /><span>Price home</span></a>
+        <a href={SECTION_PATHS.upload} aria-current={section === "upload" ? "page" : undefined} className={section === "upload" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("upload"); }}><Upload /><span>CAD price</span></a>
+        <a href={SECTION_PATHS.proof} aria-current={section === "proof" ? "page" : undefined} className={section === "proof" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("proof"); }}><BadgeCheck /><span>Proof</span></a>
+      </nav>
 
       {mapOpen && (
         <div className="map-overlay" role="presentation" onMouseDown={() => setMapOpen(false)}>
