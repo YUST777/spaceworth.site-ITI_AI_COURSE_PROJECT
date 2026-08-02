@@ -843,6 +843,15 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .secret-key-display button { height: 28px; padding: 0 10px; font-size: 7.5px; background: #2d343f; color: #fff; border-color: #4b5563; }
 .secret-key-display button:hover { background: #374151; }
 
+/* Performance rendering optimizations for snappy scroll & rendering */
+.developer-section-block,
+.proof-grid,
+.prediction-json-grid,
+.developer-doc-card {
+  content-visibility: auto;
+  contain-intrinsic-size: 1px 350px;
+}
+
 /* Made by Yousef Hover Dropdown */
 .made-by-wrapper {
   position: relative;
