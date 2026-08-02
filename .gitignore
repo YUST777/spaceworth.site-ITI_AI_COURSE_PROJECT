@@ -32,3 +32,7 @@ Thumbs.db
 
 # Assignment brief (not part of deliverable)
 *.pdf
+
+# Local visual-test artifacts
+output/
+.playwright-cli/
