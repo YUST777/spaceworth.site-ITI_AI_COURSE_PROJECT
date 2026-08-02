@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Circle, Group, Layer, Line, Rect, Stage, Text } from "react-konva";
 import {
   Box,
+  Database,
   DoorOpen,
   ExternalLink,
   Expand,
@@ -104,6 +105,7 @@ type UploadAnalysisState =
 type Section = "plan" | "upload" | "settings";
 type CanvasMode = "2d" | "3d";
 type Tool = "select" | "door" | "room" | "label" | "plant" | "delete";
+type DatabaseSyncState = "loading" | "syncing" | "synced" | "offline";
 
 const API_URL = (
   import.meta.env.VITE_PREDICTION_API_URL ??
@@ -111,6 +113,7 @@ const API_URL = (
 ).replace(/\/$/, "");
 const PLAN_API_URL = (import.meta.env.VITE_PLAN_ANALYSIS_API_URL ?? "").replace(/\/$/, "");
 const STORAGE_KEY = "spacemap-project-v2";
+const PROJECT_ID_KEY = "spacemap-project-id-v1";
 const PREDICTION_COOLDOWN_MS = 1800;
 
 const NUMERIC_LIMITS = {
@@ -124,6 +127,16 @@ const NUMERIC_LIMITS = {
 } as const;
 
 type NumericFormKey = keyof typeof NUMERIC_LIMITS;
+
+function getProjectId() {
+  const saved = localStorage.getItem(PROJECT_ID_KEY);
+  if (saved) return saved;
+  const generated = crypto.randomUUID();
+  localStorage.setItem(PROJECT_ID_KEY, generated);
+  return generated;
+}
+
+const PROJECT_ID = getProjectId();
 
 const initialForm: PropertyForm = {
   areaSqft: "1200",
@@ -504,6 +517,8 @@ function App() {
   const [showGrid, setShowGrid] = useState(true);
   const [showDimensions, setShowDimensions] = useState(true);
   const [apiHealth, setApiHealth] = useState<"checking" | "online" | "offline">("checking");
+  const [databaseSync, setDatabaseSync] = useState<DatabaseSyncState>("loading");
+  const [remoteReady, setRemoteReady] = useState(false);
   const [mapOpen, setMapOpen] = useState(false);
   const [uploadedPlan, setUploadedPlan] = useState<UploadedPlan | null>(null);
   const [uploadAnalysis, setUploadAnalysis] = useState<UploadAnalysisState>({ status: "idle" });
@@ -630,6 +645,75 @@ function App() {
   }, [project]);
 
   useEffect(() => {
+    let cancelled = false;
+    const hydrateProject = async () => {
+      if (!API_URL) {
+        setDatabaseSync("offline");
+        setRemoteReady(true);
+        return;
+      }
+      try {
+        const response = await fetch(`${API_URL}/project/${PROJECT_ID}`);
+        if (response.status === 404) {
+          if (!cancelled) {
+            setDatabaseSync("syncing");
+            setRemoteReady(true);
+          }
+          return;
+        }
+        if (!response.ok) throw new Error("Could not load the saved project.");
+        const result = (await response.json()) as { project?: ProjectState };
+        if (result.project && !cancelled) {
+          setProject({
+            form: normalizeForm({ ...initialForm, ...result.project.form }),
+            rooms: Array.isArray(result.project.rooms) && result.project.rooms.length
+              ? result.project.rooms
+              : buildPlan(2, 2, 1200),
+            prediction: result.project.prediction ?? { status: "idle" },
+          });
+        }
+        if (!cancelled) {
+          setDatabaseSync("synced");
+          setRemoteReady(true);
+        }
+      } catch {
+        if (!cancelled) {
+          setDatabaseSync("offline");
+          setRemoteReady(true);
+        }
+      }
+    };
+    void hydrateProject();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!remoteReady || !API_URL) return;
+    const timer = window.setTimeout(async () => {
+      setDatabaseSync("syncing");
+      try {
+        const response = await fetch(`${API_URL}/project/${PROJECT_ID}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            project,
+            upload_metadata: uploadedPlan
+              ? { name: uploadedPlan.name, size: uploadedPlan.size, type: uploadedPlan.type }
+              : null,
+          }),
+        });
+        if (!response.ok) throw new Error("Project sync failed.");
+        setDatabaseSync("synced");
+      } catch {
+        setDatabaseSync("offline");
+      }
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [project, uploadedPlan, remoteReady]);
+
+  useEffect(() => {
     if (initialPlanCheck.current) {
       initialPlanCheck.current = false;
       return;
@@ -696,7 +780,7 @@ function App() {
     try {
       const response = await fetch(`${API_URL}/predict`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-Project-ID": PROJECT_ID },
         body: JSON.stringify({
           area_sqft: safeAreaSqft,
           area_type: safeForm.areaType,
@@ -843,6 +927,16 @@ function App() {
               </div>
               <span className="connection-badge online">active</span>
             </article>
+            <article>
+              <div className="api-state">
+                <Database />
+                <div>
+                  <strong>Supabase project sync</strong>
+                  <span>Project ID: {PROJECT_ID}</span>
+                </div>
+              </div>
+              <span className={`connection-badge ${databaseSync === "synced" ? "online" : ""}`}>{databaseSync}</span>
+            </article>
           </div>
         </div>
       );
@@ -904,7 +998,7 @@ function App() {
         </div>
       </>
     );
-  }, [section, uploadedPlan, apiHealth, areaM2, safeFormView.floorNumber, rooms, canvasMode, selectedRoom, selectedRoomData, layoutBedrooms, layoutBathrooms, zoom, activeTool, snapToGrid, showGrid, showDimensions, historyVersion]);
+  }, [section, uploadedPlan, apiHealth, databaseSync, areaM2, safeFormView.floorNumber, rooms, canvasMode, selectedRoom, selectedRoomData, layoutBedrooms, layoutBathrooms, zoom, activeTool, snapToGrid, showGrid, showDimensions, historyVersion]);
 
   return (
     <main className="app-shell">

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from collections import defaultdict, deque
 from pathlib import Path
@@ -10,22 +11,26 @@ from typing import Literal
 import joblib
 import numpy as np
 import pandas as pd
+import psycopg
 import torch
-from fastapi import Depends, FastAPI, HTTPException, Request, Security
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
+from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field, field_validator
 from torch import nn
 
 
 MODEL_PATH = Path(os.getenv("MODEL_PATH", "/app/models/house_price.pkl"))
 API_KEY = os.getenv("API_KEY", "")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 ALLOWED_ORIGINS = [origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "*").split(",") if origin.strip()]
 RATE_LIMIT_REQUESTS = max(1, int(os.getenv("RATE_LIMIT_REQUESTS", "30")))
 RATE_LIMIT_WINDOW_SECONDS = max(1, int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60")))
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 request_windows: defaultdict[str, deque[float]] = defaultdict(deque)
 rate_limit_lock = Lock()
+project_id_pattern = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
 
 
 class EntityEmbeddingRegressor(nn.Module):
@@ -79,6 +84,82 @@ class PropertyInput(BaseModel):
     @classmethod
     def strip_text(cls, value: object) -> object:
         return value.strip() if isinstance(value, str) else value
+
+
+class ProjectPayload(BaseModel):
+    project: dict[str, object]
+    upload_metadata: dict[str, object] | None = None
+
+
+def validated_project_id(project_id: str) -> str:
+    if not project_id_pattern.fullmatch(project_id):
+        raise HTTPException(status_code=400, detail="Invalid project identifier")
+    return project_id
+
+
+def database_connection() -> psycopg.Connection:
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="Database is not configured")
+    return psycopg.connect(DATABASE_URL, connect_timeout=10)
+
+
+def initialise_database() -> None:
+    if not DATABASE_URL:
+        return
+    with database_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS spacemap_projects (
+                project_id VARCHAR(128) PRIMARY KEY,
+                project JSONB NOT NULL,
+                upload_metadata JSONB,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS spacemap_predictions (
+                id BIGSERIAL PRIMARY KEY,
+                project_id VARCHAR(128),
+                request JSONB NOT NULL,
+                predicted_price_inr NUMERIC(16, 2) NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS spacemap_predictions_project_created_idx
+            ON spacemap_predictions (project_id, created_at DESC)
+            """
+        )
+
+
+def database_is_ready() -> bool:
+    if not DATABASE_URL:
+        return False
+    try:
+        with database_connection() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            return cursor.fetchone() == (1,)
+    except (psycopg.Error, HTTPException):
+        return False
+
+
+def save_prediction(project_id: str | None, request: PropertyInput, price: float) -> None:
+    if not DATABASE_URL:
+        return
+    safe_project_id = validated_project_id(project_id) if project_id else None
+    with database_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO spacemap_predictions (project_id, request, predicted_price_inr)
+            VALUES (%s, %s, %s)
+            """,
+            (safe_project_id, Jsonb(request.model_dump(mode="json")), price),
+        )
 
 
 def normalise_category(value: object) -> str:
@@ -240,13 +321,14 @@ class HousePriceService:
 
 
 service = HousePriceService(MODEL_PATH)
+initialise_database()
 app = FastAPI(title="ITI House Price API", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=ALLOWED_ORIGINS != ["*"],
-    allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "X-API-Key"],
+    allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+    allow_headers=["Content-Type", "X-API-Key", "X-Project-ID"],
 )
 
 
@@ -256,9 +338,85 @@ def health() -> dict[str, object]:
         "status": "ok",
         "model": "FullRefitHighAccuracyTreeAndNeuralEnsemble",
         "held_out_r2": 0.906449314077493,
+        "database": "connected" if database_is_ready() else "disconnected",
+    }
+
+
+@app.get("/project/{project_id}", dependencies=[Depends(verify_api_key)])
+def get_project(project_id: str) -> dict[str, object]:
+    safe_project_id = validated_project_id(project_id)
+    with database_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT project, upload_metadata, updated_at
+            FROM spacemap_projects
+            WHERE project_id = %s
+            """,
+            (safe_project_id,),
+        )
+        row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {
+        "project": row[0],
+        "upload_metadata": row[1],
+        "updated_at": row[2].isoformat(),
+    }
+
+
+@app.put("/project/{project_id}", dependencies=[Depends(verify_api_key), Depends(enforce_rate_limit)])
+def put_project(project_id: str, payload: ProjectPayload) -> dict[str, str]:
+    safe_project_id = validated_project_id(project_id)
+    with database_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO spacemap_projects (project_id, project, upload_metadata)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (project_id) DO UPDATE SET
+                project = EXCLUDED.project,
+                upload_metadata = EXCLUDED.upload_metadata,
+                updated_at = NOW()
+            RETURNING updated_at
+            """,
+            (safe_project_id, Jsonb(payload.project), Jsonb(payload.upload_metadata) if payload.upload_metadata else None),
+        )
+        updated_at = cursor.fetchone()[0]
+    return {"status": "saved", "updated_at": updated_at.isoformat()}
+
+
+@app.get("/project/{project_id}/predictions", dependencies=[Depends(verify_api_key)])
+def get_predictions(project_id: str, limit: int = 10) -> dict[str, list[dict[str, object]]]:
+    safe_project_id = validated_project_id(project_id)
+    safe_limit = min(50, max(1, limit))
+    with database_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT request, predicted_price_inr, created_at
+            FROM spacemap_predictions
+            WHERE project_id = %s
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            (safe_project_id, safe_limit),
+        )
+        rows = cursor.fetchall()
+    return {
+        "predictions": [
+            {
+                "request": row[0],
+                "predicted_price_inr": float(row[1]),
+                "created_at": row[2].isoformat(),
+            }
+            for row in rows
+        ]
     }
 
 
 @app.post("/predict", dependencies=[Depends(verify_api_key), Depends(enforce_rate_limit)])
-def predict(request: PropertyInput) -> dict[str, float]:
-    return {"predicted_price_inr": round(service.predict(request), 2)}
+def predict(
+    request: PropertyInput,
+    x_project_id: str | None = Header(default=None, alias="X-Project-ID"),
+) -> dict[str, float]:
+    price = round(service.predict(request), 2)
+    save_prediction(x_project_id, request, price)
+    return {"predicted_price_inr": price}
