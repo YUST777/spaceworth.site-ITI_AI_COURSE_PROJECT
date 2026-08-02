@@ -519,6 +519,7 @@ function App() {
   const [apiHealth, setApiHealth] = useState<"checking" | "online" | "offline">("checking");
   const [databaseSync, setDatabaseSync] = useState<DatabaseSyncState>("loading");
   const [remoteReady, setRemoteReady] = useState(false);
+  const [syncRetryNonce, setSyncRetryNonce] = useState(0);
   const [mapOpen, setMapOpen] = useState(false);
   const [uploadedPlan, setUploadedPlan] = useState<UploadedPlan | null>(null);
   const [uploadAnalysis, setUploadAnalysis] = useState<UploadAnalysisState>({ status: "idle" });
@@ -711,7 +712,13 @@ function App() {
       }
     }, 1200);
     return () => window.clearTimeout(timer);
-  }, [project, uploadedPlan, remoteReady]);
+  }, [project, uploadedPlan, remoteReady, syncRetryNonce]);
+
+  useEffect(() => {
+    if (databaseSync !== "offline" || !remoteReady) return;
+    const timer = window.setTimeout(() => setSyncRetryNonce((value) => value + 1), 5000);
+    return () => window.clearTimeout(timer);
+  }, [databaseSync, remoteReady]);
 
   useEffect(() => {
     if (initialPlanCheck.current) {

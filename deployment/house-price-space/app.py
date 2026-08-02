@@ -356,7 +356,7 @@ def get_project(project_id: str) -> dict[str, object]:
         )
         row = cursor.fetchone()
     if not row:
-        raise HTTPException(status_code=404, detail="Project not found")
+        return {"project": None, "upload_metadata": None, "updated_at": None}
     return {
         "project": row[0],
         "upload_metadata": row[1],
