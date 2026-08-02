@@ -252,10 +252,10 @@ const MODEL_MILESTONES = [
 
 const NUMERIC_LIMITS = {
   areaSqft: { min: 100, max: 25000, fallback: 1200 },
-  bedrooms: { min: 1, max: 4, fallback: 2 },
-  bathrooms: { min: 1, max: 3, fallback: 2 },
-  balcony: { min: 0, max: 4, fallback: 1 },
-  carParking: { min: 0, max: 4, fallback: 1 },
+  bedrooms: { min: 0, max: 20, fallback: 2 },
+  bathrooms: { min: 0, max: 20, fallback: 2 },
+  balcony: { min: 0, max: 20, fallback: 1 },
+  carParking: { min: 0, max: 20, fallback: 1 },
   floorNumber: { min: -2, max: 250, fallback: 8 },
   totalFloors: { min: 1, max: 250, fallback: 24 },
 } as const;
@@ -312,7 +312,11 @@ async function loadExamplePlan(src: string, name: string): Promise<File> {
   return new File([planBlob], `${name}.png`, { type: planBlob.type || "image/png" });
 }
 
-const optionalNumber = (value: string) => (value.trim() === "" ? undefined : Number(value));
+const optionalNumber = (value: string) => {
+  if (value === undefined || value === null || value.trim() === "") return undefined;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : undefined;
+};
 
 function normalizeNumericField(key: NumericFormKey, value: string) {
   const limits = NUMERIC_LIMITS[key];
@@ -327,8 +331,10 @@ function normalizeForm(form: PropertyForm): PropertyForm {
     next[key] = normalizeNumericField(key, next[key]);
   });
   const floor = Number(next.floorNumber);
-  const totalFloors = Number(next.totalFloors);
-  next.floorNumber = String(Math.min(Math.max(-2, floor), totalFloors));
+  const totalFloors = Math.max(1, Number(next.totalFloors));
+  next.totalFloors = String(totalFloors);
+  // Ensure floorNumber never exceeds totalFloors
+  next.floorNumber = String(Math.min(floor, totalFloors));
   if (!next.location.trim()) next.location = initialForm.location;
   return next;
 }
@@ -338,9 +344,9 @@ function predictionPayload(form: PropertyForm) {
   return {
     area_sqft: Number(safeForm.areaSqft),
     area_type: safeForm.areaType,
-    location: safeForm.location,
-    locality: safeForm.locality || undefined,
-    society: safeForm.society || undefined,
+    location: safeForm.location.trim(),
+    locality: safeForm.locality.trim() || undefined,
+    society: safeForm.society.trim() || undefined,
     bedrooms: optionalNumber(safeForm.bedrooms),
     bathroom: optionalNumber(safeForm.bathrooms),
     balcony: optionalNumber(safeForm.balcony),
@@ -351,16 +357,26 @@ function predictionPayload(form: PropertyForm) {
     furnishing: safeForm.furnishing,
     transaction: safeForm.transaction,
     ownership: safeForm.ownership,
-    facing: safeForm.facing || undefined,
-    overlooking: safeForm.overlooking || undefined,
+    facing: safeForm.facing.trim() || undefined,
+    overlooking: safeForm.overlooking.trim() || undefined,
   };
 }
 
 function buildPlan(bedrooms: number, bathrooms: number, areaSqft: number): PlanRoom[] {
-  const bedroomCount = Math.min(4, Math.max(1, Math.round(bedrooms || 2)));
+  const bedroomCount = Math.min(4, Math.max(0, Math.round(bedrooms)));
   const bathroomCount = Math.min(3, Math.max(1, Math.round(bathrooms || 1)));
   const areaM2 = Math.max(25, Math.round(areaSqft * 0.092903));
   const bedroomArea = Math.max(9, Math.round(areaM2 * 0.16));
+
+  if (bedroomCount === 0) {
+    // Studio apartment layout
+    return [
+      { id: "studio-living", label: "Studio living space", detail: `${Math.round(areaM2 * 0.65)} m²`, x: 102, y: 68, width: 424, height: 270, accent: true, hasDoor: true, hasPlant: true },
+      { id: "bathroom-1", label: "Bathroom", detail: `${Math.round(areaM2 * 0.15)} m²`, x: 102, y: 348, width: 200, height: 180, hasDoor: true },
+      { id: "kitchen", label: "Kitchenette", detail: `${Math.round(areaM2 * 0.2)} m²`, x: 312, y: 348, width: 214, height: 180, accent: true },
+    ];
+  }
+
   const bedroomTemplates: PlanRoom[] = [
     { id: "bedroom-1", label: "Bedroom 1", detail: `${bedroomArea} m²`, x: 102, y: 68, width: 178, height: 145, hasDoor: true },
     { id: "bedroom-2", label: "Bedroom 2", detail: `${Math.max(9, bedroomArea - 1)} m²`, x: 348, y: 68, width: 178, height: 145, hasDoor: true },
@@ -798,72 +814,144 @@ function FloorPlan({
                   );
                 }}
               >
-                <Rect
-                  width={room.width}
-                  height={room.height}
-                  fill={roomFill(room)}
-                  stroke={selectedRoom === room.id ? "#2563eb" : "#25282d"}
-                  strokeWidth={selectedRoom === room.id ? 3 : 4}
-                />
-                {room.id.startsWith("bedroom") && (
-                  <Rect
-                    x={18}
-                    y={18}
-                    width={Math.min(88, room.width - 36)}
-                    height={34}
-                    fill="#e5e7eb"
-                    stroke="#b0b5bd"
-                  />
-                )}
-                {room.id === "living" && (
-                  <>
-                    <Rect x={54} y={80} width={92} height={48} cornerRadius={5} fill="#e8eaed" stroke="#b1b6bd" />
-                    <Circle x={31} y={105} radius={17} fill="#f0f1f2" stroke="#b1b6bd" />
-                  </>
-                )}
-                {room.id === "kitchen" && (
-                  <>
-                    <Rect x={18} y={18} width={room.width - 36} height={22} fill="#e4e6e8" />
-                    <Rect x={room.width - 43} y={63} width={22} height={48} fill="#e4e6e8" />
-                  </>
-                )}
-                {room.hasPlant && (
-                  <>
-                    <Circle x={room.width - 25} y={room.height - 26} radius={13} fill="#eef3eb" stroke="#778b71" />
-                    <Text text="✦" x={room.width - 31} y={room.height - 33} fontSize={14} fill="#60745b" />
-                  </>
-                )}
-                {room.hasDoor && (
-                  <Line
-                    points={[room.width / 2 - 13, room.height, room.width / 2, room.height - 15, room.width / 2 + 13, room.height]}
-                    stroke="#555"
-                    strokeWidth={2}
-                    tension={0.5}
-                  />
-                )}
-                <Text
-                  text={room.width < 90 ? room.label.replace("Bathroom", "Bath") : room.label}
-                  width={room.width}
-                  align="center"
-                  y={room.height / 2 - 14}
-                  fontSize={13}
-                  fontStyle="bold"
-                  fill="#1d2025"
-                />
-                <Text
-                  text={room.detail}
-                  width={room.width}
-                  align="center"
-                  y={room.height / 2 + 5}
-                  fontSize={11}
-                  fill="#575c65"
-                />
-                {showDimensions && (
-                  <>
-                    <Line points={[0, -8, room.width, -8]} stroke="#9aa1aa" strokeWidth={1} />
-                    <Text text={`${Math.max(2, Math.round(room.width / 14))} m`} x={0} y={-22} width={room.width} align="center" fontSize={8} fill="#737b84" />
-                  </>
-                )}
+                {(() => {
+                  const minDim = Math.min(room.width, room.height);
+                  const isTiny = room.width < 85 || room.height < 60;
+                  const isCompact = room.width < 110 || room.height < 80;
+
+                  const titleFontSize = isTiny ? 9 : isCompact ? 10.5 : 12.5;
+                  const detailFontSize = isTiny ? 7 : isCompact ? 8.5 : 10.5;
+                  const titleY = isTiny ? room.height / 2 - 6 : room.height / 2 - 12;
+                  const detailY = isTiny ? room.height / 2 + 4 : room.height / 2 + 3;
+
+                  // Bedroom Bed Prop (dynamic scale & position)
+                  const bedW = Math.min(80, Math.max(20, room.width - 24));
+                  const bedH = Math.min(30, Math.max(12, room.height * 0.24));
+                  const bedX = (room.width - bedW) / 2;
+                  const bedY = Math.max(6, Math.min(12, room.height * 0.1));
+
+                  // Living Room Sofa & Table Props (dynamic scale & position)
+                  const sofaW = Math.min(82, Math.max(28, room.width * 0.45));
+                  const sofaH = Math.min(26, Math.max(12, room.height * 0.22));
+                  const sofaX = (room.width - sofaW) / 2;
+                  const sofaY = Math.max(8, Math.min(room.height - sofaH - 12, room.height * 0.62));
+
+                  const coffeeR = Math.min(11, Math.max(4, minDim * 0.09));
+                  const coffeeX = Math.max(coffeeR + 4, Math.min(sofaX - coffeeR - 5, room.width * 0.22));
+                  const coffeeY = Math.max(coffeeR + 4, Math.min(room.height - coffeeR - 8, sofaY + sofaH / 2));
+
+                  // Kitchen Counter
+                  const kitchenCounterW = Math.max(16, room.width - 24);
+                  const kitchenCounterH = Math.min(18, Math.max(8, room.height * 0.16));
+
+                  // Plant Icon
+                  const plantR = Math.min(11, Math.max(6, minDim * 0.09));
+                  const plantX = room.width - plantR - 8;
+                  const plantY = room.height - plantR - 8;
+
+                  // Door Arc
+                  const doorRadius = Math.min(12, Math.max(6, room.width * 0.14));
+
+                  return (
+                    <>
+                      <Rect
+                        width={room.width}
+                        height={room.height}
+                        fill={roomFill(room)}
+                        stroke={selectedRoom === room.id ? "#2563eb" : "#25282d"}
+                        strokeWidth={selectedRoom === room.id ? 3 : 4}
+                      />
+                      {room.id.startsWith("bedroom") && room.height > 48 && room.width > 44 && (
+                        <Rect
+                          x={bedX}
+                          y={bedY}
+                          width={bedW}
+                          height={bedH}
+                          cornerRadius={3}
+                          fill="#e5e7eb"
+                          stroke="#b0b5bd"
+                        />
+                      )}
+                      {(room.id === "living" || room.id.startsWith("studio")) && room.height > 55 && room.width > 50 && (
+                        <>
+                          <Rect
+                            x={sofaX}
+                            y={sofaY}
+                            width={sofaW}
+                            height={sofaH}
+                            cornerRadius={4}
+                            fill="#e8eaed"
+                            stroke="#b1b6bd"
+                          />
+                          {room.width > 115 && room.height > 75 && (
+                            <Circle
+                              x={coffeeX}
+                              y={coffeeY}
+                              radius={coffeeR}
+                              fill="#f0f1f2"
+                              stroke="#b1b6bd"
+                            />
+                          )}
+                        </>
+                      )}
+                      {room.id === "kitchen" && room.height > 42 && (
+                        <Rect x={12} y={8} width={kitchenCounterW} height={kitchenCounterH} fill="#e4e6e8" cornerRadius={2} />
+                      )}
+                      {room.hasPlant && minDim > 45 && (
+                        <>
+                          <Circle x={plantX} y={plantY} radius={plantR} fill="#eef3eb" stroke="#778b71" />
+                          <Text
+                            text="✦"
+                            x={plantX - plantR * 0.45}
+                            y={plantY - plantR * 0.5 - 1}
+                            fontSize={plantR * 1.1}
+                            fill="#60745b"
+                          />
+                        </>
+                      )}
+                      {room.hasDoor && room.width > 40 && (
+                        <Line
+                          points={[
+                            room.width / 2 - doorRadius,
+                            room.height,
+                            room.width / 2,
+                            room.height - doorRadius,
+                            room.width / 2 + doorRadius,
+                            room.height,
+                          ]}
+                          stroke="#555"
+                          strokeWidth={2}
+                          tension={0.5}
+                        />
+                      )}
+                      <Text
+                        text={isTiny ? room.label.replace("Bedroom", "Bed").replace("Bathroom", "Bath") : room.label}
+                        width={room.width}
+                        align="center"
+                        y={titleY}
+                        fontSize={titleFontSize}
+                        fontStyle="bold"
+                        fill="#1d2025"
+                      />
+                      {!isTiny && (
+                        <Text
+                          text={room.detail}
+                          width={room.width}
+                          align="center"
+                          y={detailY}
+                          fontSize={detailFontSize}
+                          fill="#575c65"
+                        />
+                      )}
+                      {showDimensions && (
+                        <>
+                          <Line points={[0, -8, room.width, -8]} stroke="#9aa1aa" strokeWidth={1} />
+                          <Text text={`${Math.max(1, Math.round(room.width / 14))} m`} x={0} y={-22} width={room.width} align="center" fontSize={8} fill="#737b84" />
+                        </>
+                      )}
+                    </>
+                  );
+                })()}
               </Group>
             ))}
             <Transformer
