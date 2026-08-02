@@ -105,19 +105,27 @@ export function DeveloperPortal({ apiUrl, sourceUrl }: DeveloperPortalProps) {
     setKeysError("");
     try {
       const res = await fetch(apiUrl + "/api-keys", { cache: "no-store" });
-      if (!res.ok) throw new Error("Failed to load keys");
+      if (res.status === 404) {
+        setKeysError("The API keys endpoint is not available yet. Redeploy the backend to enable key management.");
+        return;
+      }
+      if (!res.ok) throw new Error("Failed to load keys (" + res.status + ")");
       const data = (await res.json()) as { keys: ApiKeyRow[] };
       setApiKeys(data.keys);
     } catch (err) {
-      setKeysError(err instanceof Error ? err.message : "Could not load API keys");
+      if (err instanceof TypeError) {
+        setKeysError("Could not reach the API server.");
+      } else {
+        setKeysError(err instanceof Error ? err.message : "Could not load API keys");
+      }
     } finally {
       setKeysLoading(false);
     }
   }, [apiUrl]);
 
   useEffect(() => {
-    void fetchKeys();
-  }, [fetchKeys]);
+    if (view === "apikeys") void fetchKeys();
+  }, [fetchKeys, view]);
 
   const refreshHealth = async () => {
     setHealthError("");
