@@ -1666,7 +1666,7 @@ function App() {
     <main className="app-shell">
       <Card className="topbar card tour-welcome">
         <div className="brand">
-          <img src="/logo.svg" alt="" />
+          <img src="/logo.svg" alt="SpaceWorth" width={26} height={28} style={{ width: 26, height: 28, objectFit: "contain" }} />
           <span>SpaceWorth</span>
         </div>
         <nav className="top-tabs" aria-label="Main product views">
