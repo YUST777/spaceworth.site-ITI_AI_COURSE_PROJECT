@@ -45,7 +45,9 @@ The dataset contained 187,531 raw rows across 21 columns. After deduplicating, p
 
 ---
 
-## 🏗️ System Architecture
+> 💡 **Architectural Note**:
+> - **Visual Floor-Plan Parsing**: Uses the external **Google Gemini 3.5 Flash API** strictly as a multimodal OCR tool to read printed room labels, dimensions, and sqft from uploaded blueprint/PDF images.
+> - **Price Valuation Engine**: Powered by **OUR CUSTOM-TRAINED MACHINE LEARNING MODEL** ($90.64\%$ held-out $R^2$ ensemble combining LightGBM, CatBoost, and 3x PyTorch Entity Embedding Neural Networks), trained from scratch on 57,058 Indian real estate listings.
 
 ```mermaid
 flowchart TD
@@ -55,23 +57,36 @@ flowchart TD
         Portal["Developer Portal & API Keys Manager"]
     end
 
-    subgraph Service["Inference Tier (FastAPI Engine)"]
-        API["FastAPI App (Railway / Docker Container)"]
-        CAD["CAD Vision Intelligence (Gemini 3.5 Flash)"]
-        Auth["API Key Auth & Rate Limiter"]
+    subgraph CoreBackend["FastAPI Backend Container"]
+        API["FastAPI Orchestrator & Rate Limiter"]
+        
+        subgraph OurModel["OUR CUSTOM ML MODEL ENGINE (Trained by Us)"]
+            Prep["Preprocessing & Target Encoding Pipeline"]
+            Ensemble["90.64% R² Price Valuation Ensemble\n(LightGBM + CatBoost + 3x PyTorch NN)"]
+        end
     end
 
-    subgraph Persistence["Storage & Artifacts Tier"]
-        DB[(Supabase PostgreSQL Database)]
-        HF["Hugging Face (55 MiB Ensemble Weights)"]
+    subgraph ExternalService["External Vision API (OCR Only)"]
+        Gemini["Google Gemini 3.5 Flash API\n(Reads drawing text/sqft — DOES NOT predict price)"]
     end
 
-    UI -->|"POST /predict"| API
-    UI -->|"POST /analyze"| API
+    subgraph Persistence["Storage & Weights"]
+        DB[(Supabase PostgreSQL DB\nProjects, Logs, API Keys)]
+        HF["Hugging Face Storage\n(Hosts Our 55 MiB Trained Model Artifact)"]
+    end
+
+    UI -->|"1a. Direct Property Inputs (POST /predict)"| API
+    UI -->|"1b. Floorplan Image/PDF (POST /analyze)"| API
     Portal -->|"CRUD /api-keys"| API
-    API -->|"Multimodal Floorplan OCR"| CAD
+    
+    API -->|"2. Send Image for OCR Text Parsing"| Gemini
+    Gemini -->|"3. Return Extracted Rooms & Area Sqft"| API
+    
+    API -->|"4. Feed Features into OUR Model"| OurModel
+    OurModel -->|"5. Output Custom ₹ Valuation"| API
+    
     API -->|"Persist Projects, History & Keys"| DB
-    API -->|"Fetch Model Weights at Startup"| HF
+    OurModel -->|"Load Our 55 MiB Trained .pkl File at Startup"| HF
 ```
 
 ---
