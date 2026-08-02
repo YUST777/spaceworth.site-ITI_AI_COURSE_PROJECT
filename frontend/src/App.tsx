@@ -54,6 +54,7 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { DeveloperPortal } from "@/DeveloperPortal";
 
 type PropertyForm = {
   areaSqft: string;
@@ -161,7 +162,7 @@ type UploadAnalysisState =
   | { status: "success"; result: PlanAnalysisResult }
   | { status: "error"; message: string };
 
-type Section = "plan" | "upload" | "proof" | "settings";
+type Section = "plan" | "upload" | "proof" | "developers" | "settings";
 type CanvasMode = "2d" | "3d";
 type Tool = "select" | "door" | "room" | "label" | "plant" | "delete";
 type MobilePanel = "canvas" | "details" | "result";
@@ -197,6 +198,7 @@ const SECTION_PATHS: Record<Section, string> = {
   plan: "/price-my-home",
   upload: "/cad-to-price",
   proof: "/proof",
+  developers: "/developers",
   settings: "/settings",
 };
 
@@ -1582,6 +1584,7 @@ function App() {
           <a href={SECTION_PATHS.plan} aria-current={section === "plan" ? "page" : undefined} className={section === "plan" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("plan"); }}>Price my home</a>
           <a href={SECTION_PATHS.upload} aria-current={section === "upload" ? "page" : undefined} className={section === "upload" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("upload"); }}>CAD to price</a>
           <a href={SECTION_PATHS.proof} aria-current={section === "proof" ? "page" : undefined} className={section === "proof" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("proof"); }}>Proof</a>
+          <a href={SECTION_PATHS.developers} aria-current={section === "developers" ? "page" : undefined} className={section === "developers" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("developers"); }}>Developers</a>
         </nav>
         <div className="topbar-balance" aria-hidden="true" />
       </Card>
@@ -1589,7 +1592,7 @@ function App() {
       <AnimatePresence mode="wait" initial={false}>
       <motion.div
         key={section}
-        className={`workspace tour-workspace ${section === "proof" ? "proof-mode" : ""} mobile-panel-${mobilePanel}`}
+        className={`workspace tour-workspace ${section === "proof" || section === "developers" ? "full-page-mode" : ""} mobile-panel-${mobilePanel}`}
         initial={{ opacity: 0, y: 8, scale: 0.996 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: -6, scale: 0.998 }}
@@ -1615,12 +1618,20 @@ function App() {
             <TooltipContent side="right">Proof of work</TooltipContent>
           </Tooltip>
           <Tooltip>
+            <TooltipTrigger render={<Button variant="ghost" size="icon" className={`rail-item ${section === "developers" ? "active" : ""}`} onClick={() => navigateTo("developers")} aria-label="Developer API" />}>
+              <Code2 />
+            </TooltipTrigger>
+            <TooltipContent side="right">Developer API</TooltipContent>
+          </Tooltip>
+          <Tooltip>
             <TooltipTrigger render={<Button variant="ghost" size="icon" className={`rail-item push-bottom ${section === "settings" ? "active" : ""}`} onClick={() => navigateTo("settings")} aria-label="Settings" />}>
               <Settings />
             </TooltipTrigger>
             <TooltipContent side="right">Settings</TooltipContent>
           </Tooltip>
         </nav>
+
+        {section === "developers" && <DeveloperPortal apiUrl={API_URL} sourceUrl={SOURCE_URL} />}
 
         {section === "proof" && (
           <Card className="proof-page card">
@@ -2077,9 +2088,9 @@ function App() {
       </motion.div>
       </AnimatePresence>
 
-      {section !== "proof" && section !== "settings" && mobilePanel !== "canvas" && <button className="mobile-sheet-backdrop" onClick={() => setMobilePanel("canvas")} aria-label="Close open drawer" />}
-      <div className={`mobile-control-dock card ${section === "proof" || section === "settings" ? "routes-only" : ""}`}>
-        {section !== "proof" && section !== "settings" && (
+      {section !== "proof" && section !== "developers" && section !== "settings" && mobilePanel !== "canvas" && <button className="mobile-sheet-backdrop" onClick={() => setMobilePanel("canvas")} aria-label="Close open drawer" />}
+      <div className={`mobile-control-dock card ${section === "proof" || section === "developers" || section === "settings" ? "routes-only" : ""}`}>
+        {section !== "proof" && section !== "developers" && section !== "settings" && (
           <div className="mobile-panel-switch" aria-label="Workspace panels">
             <button className={mobilePanel === "details" ? "active" : ""} onClick={() => setMobilePanel(mobilePanel === "details" ? "canvas" : "details")}><SlidersHorizontal /><span>{section === "upload" ? "Context" : "Details"}</span></button>
             <button className={mobilePanel === "canvas" ? "active" : ""} onClick={() => setMobilePanel("canvas")}><MapIcon /><span>{section === "upload" ? "Preview" : "Plan"}</span></button>
@@ -2090,6 +2101,7 @@ function App() {
           <a href={SECTION_PATHS.plan} aria-current={section === "plan" ? "page" : undefined} className={section === "plan" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("plan"); }}><Sparkles /><span>Price home</span></a>
           <a href={SECTION_PATHS.upload} aria-current={section === "upload" ? "page" : undefined} className={section === "upload" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("upload"); }}><Upload /><span>CAD price</span></a>
           <a href={SECTION_PATHS.proof} aria-current={section === "proof" ? "page" : undefined} className={section === "proof" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("proof"); }}><BadgeCheck /><span>Proof</span></a>
+          <a href={SECTION_PATHS.developers} aria-current={section === "developers" ? "page" : undefined} className={section === "developers" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("developers"); }}><Code2 /><span>API</span></a>
         </nav>
       </div>
 
