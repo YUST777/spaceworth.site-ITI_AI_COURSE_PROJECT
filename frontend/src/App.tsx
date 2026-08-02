@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { motion } from "framer-motion";
 import { Circle, Group, Layer, Line, Rect, Stage, Text, Transformer } from "react-konva";
 import type Konva from "konva";
 import { driver, type Driver } from "driver.js";
@@ -1669,10 +1670,38 @@ function App() {
           <span>SpaceWorth</span>
         </div>
         <nav className="top-tabs" aria-label="Main product views">
-          <a href={SECTION_PATHS.plan} aria-current={section === "plan" ? "page" : undefined} className={section === "plan" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("plan"); }}>Price my home</a>
-          <a href={SECTION_PATHS.upload} aria-current={section === "upload" ? "page" : undefined} className={section === "upload" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("upload"); }}>CAD to price</a>
-          <a href={SECTION_PATHS.proof} aria-current={section === "proof" ? "page" : undefined} className={section === "proof" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("proof"); }}>Proof</a>
-          <a href={SECTION_PATHS.developers} aria-current={section === "developers" ? "page" : undefined} className={section === "developers" ? "active" : ""} onClick={(event) => { event.preventDefault(); navigateTo("developers"); }}>Developers</a>
+          {[
+            { id: "plan", label: "Price my home", href: SECTION_PATHS.plan },
+            { id: "upload", label: "CAD to price", href: SECTION_PATHS.upload },
+            { id: "proof", label: "Proof", href: SECTION_PATHS.proof },
+            { id: "developers", label: "Developers", href: SECTION_PATHS.developers },
+          ].map((tab) => {
+            const isActive = section === tab.id;
+            return (
+              <motion.a
+                key={tab.id}
+                href={tab.href}
+                aria-current={isActive ? "page" : undefined}
+                className={`top-tab-link ${isActive ? "active" : ""}`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  navigateTo(tab.id as Section);
+                }}
+                whileHover={{ scale: 1.04 }}
+                whileTap={{ scale: 0.96 }}
+                transition={{ type: "spring", stiffness: 420, damping: 28 }}
+              >
+                {isActive && (
+                  <motion.div
+                    layoutId="activeTopTabIndicator"
+                    className="top-tab-active-bg"
+                    transition={{ type: "spring", stiffness: 450, damping: 32 }}
+                  />
+                )}
+                <span className="top-tab-text">{tab.label}</span>
+              </motion.a>
+            );
+          })}
         </nav>
         <div className="made-by-wrapper">
           <button type="button" className="made-by-trigger" aria-label="Developer links">
